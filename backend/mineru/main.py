@@ -290,6 +290,11 @@ def process_pdf_with_mineru(pdf_path, output_dir):
     from mineru.backend.pipeline.model_json_to_middle_json import result_to_middle_json as pipeline_result_to_middle_json
     import pypdfium2
     import torch  # Often required by mineru backend
+    original_torch_load = torch.load
+    def patched_load(*args, **kwargs):
+        kwargs.setdefault('weights_only', False)
+        return original_torch_load(*args, **kwargs)
+    torch.load = patched_load
     
     try:
         with open(pdf_path, 'rb') as f:
