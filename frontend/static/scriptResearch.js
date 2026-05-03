@@ -1,0 +1,524 @@
+  
+// Wait for DOM to be fully loaded before mounting Vue
+document.addEventListener('DOMContentLoaded', function() {
+  // Check if Vue is available
+  if (typeof Vue === 'undefined') {
+    console.error('Vue is not loaded!');
+    return;
+  }
+  
+  const { createApp, ref, computed, watch } = Vue;
+  
+  // Check if the app container exists
+  const appContainer = document.getElementById('app');
+  if (!appContainer) {
+    console.error('Vue app container (#app) not found!');
+    return;
+  }
+  
+  console.log('Mounting Vue app...');
+  
+  createApp({
+    setup() {
+      const mode = ref('review')
+      const file = ref(null)
+      const isDragging = ref(false)
+      const isProcessing = ref(false)
+      const isGenerating = ref(false)
+      const isDiscussing = ref(false)
+      const isAskingFollowUp = ref(false)
+      const progress = ref(0)
+      const statusMessage = ref('')
+      const paperPoints = ref([])
+      const prompt = ref('')
+      const generatedPoints = ref([])
+      const discussion = ref('')
+      const followUpQuestion = ref('')
+      const usedPaperIds = ref([]) // Track which papers were used for points
+      
+      // Database viewer state
+      const loadingDatabase = ref(false)
+      const databaseError = ref('')
+      const papers = ref([])
+      const searchQuery = ref('')
+      const paperToExpand = ref(null)
+      const hasApiKey = ref(false)
+      const showKeyModal = ref(false)
+      const apiKeyInput = ref('')
+      const keyModalError = ref('')
+
+      const formatPoint = (point) => {
+        if (point.formatted_text) {
+          return point.formatted_text
+            .replace('•', '<span class="point-bullet">•</span>')
+            .replace(/\(Source:(.*?)\)/, '<span class="point-source">$1</span>');
+        }
+        return `${point.text} <span class="point-source">${point.source}</span>`;
+      }
+
+      async function fetchWithSession(url, options = {}) {
+        return fetch(url, { credentials: 'include', ...options })
+      }
+
+      async function refreshSessionStatus() {
+        try {
+          const res = await fetchWithSession('/session/status', { headers: { 'Accept': 'application/json' } })
+          if (!res.ok) return
+          const data = await res.json()
+          hasApiKey.value = !!data.has_api_key
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      function closeKeyModal() {
+        showKeyModal.value = false
+        apiKeyInput.value = ''
+        keyModalError.value = ''
+      }
+
+      function promptForApiKey() {
+        keyModalError.value = ''
+        showKeyModal.value = true
+      }
+
+      async function saveApiKey() {
+        keyModalError.value = ''
+        const key = (apiKeyInput.value || '').trim()
+        if (!key) return
+        const res = await fetchWithSession('/session/api-key', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_key: key })
+        })
+        if (!res.ok) {
+          keyModalError.value = await res.text().catch(() => 'Failed to set key')
+          return
+        }
+        hasApiKey.value = true
+        closeKeyModal()
+      }
+
+      async function ensureApiKey() {
+        await refreshSessionStatus()
+        if (!hasApiKey.value) {
+          promptForApiKey()
+          throw new Error('OpenRouter API key required')
+        }
+      }
+
+      async function endSession() {
+        await fetchWithSession('/session/end', { method: 'POST' }).catch(() => {})
+        hasApiKey.value = false
+        window.location.reload()
+      }
+      
+      const statusClass = computed(() => {
+        if (statusMessage.value.includes('success')) return 'success'
+        if (statusMessage.value.includes('Error') || statusMessage.value.includes('Failed')) return 'error'
+        return 'processing'
+      })
+      
+      const filteredPapers = computed(() => {
+        if (!searchQuery.value) return papers.value;
+        
+        const query = searchQuery.value.toLowerCase();
+        return papers.value.filter(paper => {
+          const filename = (paper.filename || '').toLowerCase();
+          const content = paper.fullContent ? paper.fullContent.toLowerCase() : '';
+          const points = paper.points ? paper.points.join(' ').toLowerCase() : '';
+          
+          return filename.includes(query) || 
+                 content.includes(query) || 
+                 points.includes(query);
+        });
+      });
+      
+      function setMode(newMode) {
+        mode.value = newMode
+        if (newMode === 'review') {
+          generatedPoints.value = []
+          discussion.value = ''
+          prompt.value = ''
+        } else if (newMode === 'database') {
+          loadDatabase()
+        } else {
+          paperPoints.value = []
+          statusMessage.value = ''
+        }
+      }
+      
+      function formatFileSize(bytes) {
+        if (bytes === 0) return '0 Bytes'
+        const k = 1024
+        const sizes = ['Bytes', 'KB', 'MB', 'GB']
+        const i = Math.floor(Math.log(bytes) / Math.log(k))
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+      }
+      
+      function formatBytes(bytes) {
+          if (bytes === 0) return '0 Bytes'
+          const k = 1024
+          const sizes = ['Bytes', 'KB', 'MB', 'GB']
+          const i = Math.floor(Math.log(bytes) / Math.log(k))
+          return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+      }
+      
+      function triggerFileInput() {
+        document.getElementById('fileInput').click()
+      }
+      
+      function handleFileSelect(event) {
+        if (event.target.files.length) {
+          file.value = event.target.files[0]
+        }
+      }
+      
+      function handleDragOver(event) {
+        isDragging.value = true
+        event.dataTransfer.dropEffect = 'copy'
+      }
+      
+      function handleDrop(event) {
+        isDragging.value = false
+        const files = event.dataTransfer.files
+        if (files.length && files[0].type === 'application/pdf') {
+          file.value = files[0]
+        } else {
+          statusMessage.value = 'Please drop a PDF file'
+        }
+      }
+      
+      async function processPaper() {
+        if (!file.value) return
+
+        try { await ensureApiKey() } catch (_) { return }
+        
+        isProcessing.value = true
+        progress.value = 30
+        statusMessage.value = 'Uploading and processing paper...'
+        
+        try {
+          const formData = new FormData()
+          formData.append('file', file.value)
+          
+          const response = await fetchWithSession('/upload', {
+              method: 'POST',
+              body: formData
+          })
+          
+          progress.value = 70
+          
+          if (!response.ok) {
+              const error = await response.text()
+              throw new Error(error || 'Failed to process paper')
+          }
+          
+          const data = await response.json()
+          statusMessage.value = 'Paper processed successfully! Extracted key points.'
+          
+          paperPoints.value = data.points.map(point => ({
+              formatted_text: point.text,
+              raw_data: {
+                  text: point.text,
+                  source: data.filename || 'Current Paper',
+                  sourceId: data.id
+              }
+          }))
+        } catch (error) {
+          statusMessage.value = `Error: ${error.message || 'Unknown error occurred'}`
+        } finally {
+          progress.value = 100
+          setTimeout(() => {
+              isProcessing.value = false
+              progress.value = 0
+          }, 500)
+        }
+      }
+      
+      async function generatePoints() {
+        if (!prompt.value.trim()) return
+
+        try { await ensureApiKey() } catch (_) { return }
+        
+        isGenerating.value = true
+        progress.value = 30
+        generatedPoints.value = []
+        discussion.value = ''
+        usedPaperIds.value = [] // Reset used papers
+        
+        try {
+          const response = await fetchWithSession('/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: prompt.value })
+          })
+          
+          progress.value = 70
+          
+          if (!response.ok) {
+            throw new Error('Failed to generate points')
+          }
+          
+          const data = await response.json()
+          
+          generatedPoints.value = data.points.map(point => ({
+            text: point.formatted_text || point.text,
+            source: point.raw_data?.source || point.source,
+            sourceId: point.raw_data?.sourceId || point.sourceId
+          }))
+          
+          // Store the paper IDs used for these points
+          if (data.paper_ids) {
+            usedPaperIds.value = data.paper_ids
+          }
+        } catch (error) {
+          generatedPoints.value = [{
+            text: `Error: ${error.message || 'Failed to generate points'}`,
+            source: null,
+            sourceId: null
+          }]
+        } finally {
+          progress.value = 100
+          setTimeout(() => {
+            isGenerating.value = false
+            progress.value = 0
+          }, 500)
+        }
+      }
+      
+      async function startDiscussion() {
+        if (!prompt.value.trim() || !generatedPoints.value.length) return
+
+        try { await ensureApiKey() } catch (_) { return }
+        
+        isDiscussing.value = true
+        discussion.value = 'Analyzing research points and generating discussion...'
+        
+        try {
+          const response = await fetchWithSession('/discuss', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              prompt: prompt.value,
+              paper_ids: usedPaperIds.value // Pass the papers used for points
+            })
+          })
+          
+          if (!response.ok) {
+            throw new Error('Failed to start discussion')
+          }
+          
+          const data = await response.json()
+          discussion.value = data.discussion || 'No discussion generated'
+        } catch (error) {
+          discussion.value = `Error: ${error.message || 'Failed to generate discussion'}`
+        } finally {
+          isDiscussing.value = false
+        }
+      }
+
+      async function askFollowUp() {
+        if (!followUpQuestion.value.trim()) return
+
+        try { await ensureApiKey() } catch (_) { return }
+        
+        isAskingFollowUp.value = true
+        const originalDiscussion = discussion.value
+        discussion.value = `${originalDiscussion}\n\n[Question]: ${followUpQuestion.value}\n\n[Answer]: Thinking...`
+        
+        try {
+          const response = await fetchWithSession('/discuss', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              prompt: followUpQuestion.value,
+              context: originalDiscussion,
+              paper_ids: usedPaperIds.value // Maintain paper context
+            })
+          })
+          
+          if (!response.ok) {
+            throw new Error('Failed to get follow-up answer')
+          }
+          
+          const data = await response.json()
+          discussion.value = `${originalDiscussion}\n\n[Question]: ${followUpQuestion.value}\n\n[Answer]: ${data.discussion}`
+          followUpQuestion.value = ''
+        } catch (error) {
+          discussion.value = `${originalDiscussion}\n\n[Question]: ${followUpQuestion.value}\n\n[Error]: ${error.message || 'Failed to answer'}`
+        } finally {
+          isAskingFollowUp.value = false
+        }
+      }
+      
+      async function loadDatabase() {
+        try {
+          loadingDatabase.value = true;
+          databaseError.value = '';
+          
+          const response = await fetchWithSession('/database', {
+              headers: { 'Accept': 'application/json' }
+          });
+
+          const contentType = response.headers.get('content-type');
+          if (!contentType?.includes('application/json')) {
+              const errorText = await response.text();
+              throw new Error(`Server returned HTML: ${errorText.substring(0, 50)}`);
+          }
+
+          const data = await response.json();
+          
+          if (data.status !== "success") {
+              throw new Error(data.message || "Unknown error");
+          }
+
+          papers.value = data.papers.map(p => ({
+              ...p,
+              expanded: false,
+              fullContent: "",
+              content_length: p.content_length || 0
+          }));
+          
+        } catch (error) {
+          databaseError.value = `Failed to load: ${error.message}`;
+          console.error("Database load error:", error);
+        } finally {
+          loadingDatabase.value = false;
+        }
+      }
+      
+      async function togglePaperDetails(paperId) {
+        const paper = papers.value.find(p => p.id === paperId);
+        if (!paper) return;
+        
+        paper.expanded = !paper.expanded;
+        
+        if (paper.expanded && !paper.fullContent) {
+          await loadPaperDetails(paper);
+        }
+      }
+      
+      async function loadPaperDetails(paper) {
+        try {
+          paper.detailsLoading = true;
+          paper.detailsError = '';
+          
+          const response = await fetchWithSession(`/database/${paper.id}`);
+          
+          if (!response.ok) {
+            throw new Error('Failed to load paper details')
+          }
+          
+          const data = await response.json();
+          paper.fullContent = data.content;
+          paper.points = Array.isArray(data.points) ? data.points : [];
+        } catch (error) {
+          paper.detailsError = `Error: ${error.message || 'Unknown error occurred'}`;
+        } finally {
+          paper.detailsLoading = false;
+        }
+      }
+      
+      function navigateToSource(paperId) {
+        if (!paperId) return;
+        paperToExpand.value = paperId;
+        setMode('database');
+      }
+      
+      async function downloadMarkdown(paperId, filename) {
+        try {
+          const response = await fetchWithSession(`/download/${paperId}`);
+          
+          if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.message || 'Failed to download file');
+          }
+          
+          const blob = await response.blob();
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          
+          const contentDisposition = response.headers.get('content-disposition');
+          let mdFilename = filename;
+          if (contentDisposition) {
+            const matches = contentDisposition.match(/filename="?(.+)"?/);
+            if (matches) mdFilename = matches[1];
+          }
+          if (!mdFilename.endsWith('.md')) {
+            mdFilename = `${mdFilename.split('.')[0]}.md`;
+          }
+          
+          a.download = mdFilename;
+          document.body.appendChild(a);
+          a.click();
+          window.URL.revokeObjectURL(url);
+          a.remove();
+        } catch (error) {
+          statusMessage.value = `Download failed: ${error.message}`;
+        }
+      }
+      
+      watch(() => mode.value, (newMode) => {
+        if (newMode === 'database' && papers.value.length === 0) {
+          loadDatabase();
+        }
+      });
+
+      // On first load, initialize session + optionally request key
+      refreshSessionStatus().then(() => {
+        if (!hasApiKey.value) promptForApiKey()
+      })
+      
+      return {
+        mode,
+        file,
+        isDragging,
+        isProcessing,
+        isGenerating,
+        isDiscussing,
+        isAskingFollowUp,
+        progress,
+        statusMessage,
+        paperPoints,
+        prompt,
+        generatedPoints,
+        discussion,
+        followUpQuestion,
+        usedPaperIds,
+        statusClass,
+        loadingDatabase,
+        databaseError,
+        papers,
+        filteredPapers,
+        searchQuery,
+        setMode,
+        formatFileSize,
+        formatBytes,
+        triggerFileInput,
+        handleFileSelect,
+        handleDragOver,
+        handleDrop,
+        processPaper,
+        generatePoints,
+        startDiscussion,
+        askFollowUp,
+        loadDatabase,
+        togglePaperDetails,
+        navigateToSource,
+        downloadMarkdown,
+        formatPoint,
+        promptForApiKey,
+        endSession,
+        showKeyModal,
+        apiKeyInput,
+        keyModalError,
+        closeKeyModal,
+        saveApiKey
+      }
+    }
+  }).mount('#app');
+
+  console.log('Vue app mounted successfully');
+});

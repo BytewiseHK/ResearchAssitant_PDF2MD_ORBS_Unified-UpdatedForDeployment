@@ -1,0 +1,24 @@
+{
+  "rewrites": [
+    { "source": "/session/:path*", "destination": "https://RENDER_BACKEND_HOST/session/:path*" },
+    { "source": "/chatbot-answer", "destination": "https://RENDER_BACKEND_HOST/chatbot-answer" },
+    { "source": "/clear-chat-history", "destination": "https://RENDER_BACKEND_HOST/clear-chat-history" },
+    { "source": "/files-upload", "destination": "https://RENDER_BACKEND_HOST/files-upload" },
+    { "source": "/analyze", "destination": "https://RENDER_BACKEND_HOST/analyze" },
+    { "source": "/upload", "destination": "https://RENDER_BACKEND_HOST/upload" },
+    { "source": "/generate", "destination": "https://RENDER_BACKEND_HOST/generate" },
+    { "source": "/discuss", "destination": "https://RENDER_BACKEND_HOST/discuss" },
+    { "source": "/database/:path*", "destination": "https://RENDER_BACKEND_HOST/database/:path*" },
+    { "source": "/download/:path*", "destination": "https://RENDER_BACKEND_HOST/download/:path*" },
+
+    { "source": "/app/static/:path*", "destination": "/frontend/static/:path*" },
+    { "source": "/app/research", "destination": "/frontend/research/index.html" },
+    { "source": "/app/research/:path*", "destination": "/frontend/research/index.html" },
+    { "source": "/app/notebook", "destination": "/frontend/notebook/index.html" },
+    { "source": "/app/notebook/:path*", "destination": "/frontend/notebook/index.html" },
+    { "source": "/app", "destination": "/frontend/index.html" },
+    { "source": "/app/:path*", "destination": "/frontend/index.html" },
+    { "source": "/", "destination": "/frontend/index.html" }
+  ]
+}
+

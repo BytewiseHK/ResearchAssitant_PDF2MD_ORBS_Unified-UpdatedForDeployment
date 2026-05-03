@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <base href="/app/">  <!-- Add this in <head> -->
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bytewise Research Assistant</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="/app/static/styleResearch.css">
+</head>
+<body>
+  <div id="app" class="app-container">
+    <div class="logo">
+      <i class="fas fa-book-open logo-icon"></i>
+    </div>
+    <h1>Bytewise Research Assistant</h1>
+    <p class="subtitle">Upload, analyze, and discuss research papers with AI-powered insights</p>
+
+    <div class="mode-toggle" style="margin-top: 8px; justify-content: center;">
+      <button @click="promptForApiKey">
+        <i class="fas fa-key"></i> Set OpenRouter Key (Session)
+      </button>
+      <button @click="endSession">
+        <i class="fas fa-door-open"></i> End Session
+      </button>
+    </div>
+
+    <!-- API Key Modal -->
+    <div v-if="showKeyModal" class="ra-modal-overlay" @click.self="closeKeyModal">
+      <div class="ra-modal">
+        <div class="ra-modal-header">
+          <h3><i class="fas fa-key"></i> OpenRouter API Key</h3>
+          <button class="ra-icon-btn" @click="closeKeyModal" title="Close">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <p class="ra-modal-subtitle">
+          This key is kept only in server memory for this browser session and is deleted when you end the session (or after inactivity).
+        </p>
+        <input type="password" v-model="apiKeyInput" placeholder="sk-or-..." autocomplete="off" spellcheck="false">
+        <div class="ra-modal-actions">
+          <button class="btn" @click="saveApiKey" :disabled="!apiKeyInput.trim()">
+            <i class="fas fa-save"></i> Save for Session
+          </button>
+          <button class="btn btn-tertiary" @click="endSession">
+            <i class="fas fa-door-open"></i> End Session
+          </button>
+        </div>
+        <div v-if="keyModalError" class="status-message error" style="margin-top: 12px;">
+          <i class="fas fa-exclamation-circle"></i> {{ keyModalError }}
+        </div>
+      </div>
+    </div>
+    
+    <div class="mode-toggle">
+      <button @click="setMode('review')" :class="{ active: mode === 'review' }">
+        <i class="fas fa-file-upload"></i> Review Mode
+      </button>
+      <button @click="setMode('write')" :class="{ active: mode === 'write' }">
+        <i class="fas fa-edit"></i> Write New
+      </button>
+      <button @click="setMode('database')" :class="{ active: mode === 'database' }">
+        <i class="fas fa-database"></i> Database
+      </button>
+    </div>
+
+    <!-- Review Mode -->
+    <div v-if="mode === 'review'">
+      <h2><i class="fas fa-microscope"></i> Upload Research Paper</h2>
+      
+      <div class="upload-area"
+           :class="{ 'dragover': isDragging }"
+           @dragover.prevent="handleDragOver"
+           @dragleave="isDragging = false"
+           @drop.prevent="handleDrop"
+           @click="triggerFileInput">
+        <div class="upload-icon">
+          <i class="fas fa-cloud-upload-alt"></i>
+        </div>
+        <p v-if="!file">Drag & drop your PDF here or click to browse</p>
+        <div v-else class="file-info">
+          <i class="fas fa-file-pdf"></i>
+          <div>
+            <strong>{{ file.name }}</strong>
+            <p>{{ formatFileSize(file.size) }}</p>
+          </div>
+        </div>
+        <input type="file" id="fileInput" @change="handleFileSelect" accept=".pdf" class="hidden">
+      </div>
+      
+      <div class="action-buttons">
+        <button class="btn" @click="processPaper" :disabled="!file || isProcessing">
+          <span v-if="isProcessing" class="loading-spinner"></span>
+          <span v-else><i class="fas fa-cogs"></i> Process Paper</span>
+        </button>
+      </div>
+      
+      <div v-if="isProcessing" class="progress-bar">
+        <div class="progress-fill" :style="{ width: progress + '%' }"></div>
+      </div>
+      
+      <div v-if="statusMessage" :class="['status-message', statusClass]">
+        <i v-if="statusClass === 'success'" class="fas fa-check-circle"></i>
+        <i v-if="statusClass === 'error'" class="fas fa-exclamation-circle"></i>
+        <i v-if="statusClass === 'processing'" class="fas fa-sync-alt fa-spin"></i>
+        {{ statusMessage }}
+      </div>
+      
+      <div v-if="paperPoints.length" class="results-container">
+        <h3><i class="fas fa-list-ul"></i> Generated Points:</h3>
+        <div v-for="(point, index) in paperPoints" :key="index" class="point-item">
+          {{ point.formatted_text }}
+          <span v-if="point.raw_data.source" class="citation" @click="navigateToSource(point.raw_data.sourceId)">
+            [Source: {{ point.raw_data.source }}]
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Write New Mode -->
+    <div v-if="mode === 'write'">
+      <h2><i class="fas fa-lightbulb"></i> Research Prompt</h2>
+      
+      <textarea v-model="prompt" 
+                placeholder="Enter your research question or topic (e.g., 'Impact of AI on climate change', 'Recent advances in quantum computing')..." 
+                rows="5"></textarea>
+      
+      <div class="action-buttons">
+        <button class="btn btn-secondary" @click="generatePoints" :disabled="!prompt.trim() || isGenerating">
+          <span v-if="isGenerating" class="loading-spinner"></span>
+          <span v-else><i class="fas fa-bolt"></i> Generate Research Points</span>
+        </button>
+      </div>
+      
+      <div v-if="isGenerating" class="progress-bar">
+        <div class="progress-fill" :style="{ width: progress + '%' }"></div>
+      </div>
+      
+      <div v-if="generatedPoints.length" class="results-container">
+        <h3><i class="fas fa-star"></i> Generated Points:</h3>
+        <div v-for="(point, index) in generatedPoints" :key="index" class="point-item">
+          {{ point.text }}
+          <span v-if="point.source" class="citation" @click="navigateToSource(point.sourceId)">
+            [Source: {{ point.source }}]
+          </span>
+        </div>
+        
+        <div class="action-buttons">
+          <button class="btn btn-tertiary" @click="startDiscussion" :disabled="isDiscussing">
+            <span v-if="isDiscussing" class="loading-spinner"></span>
+            <span v-else><i class="fas fa-comments"></i> Start Discussion</span>
+          </button>
+        </div>
+        
+        <textarea v-if="discussion"
+                  v-model="followUpQuestion"
+                  placeholder="Ask a follow-up question about the research..."
+                  rows="3"></textarea>
+        
+        <button v-if="discussion && followUpQuestion.trim()"
+                class="btn btn-secondary"
+                @click="askFollowUp"
+                :disabled="isAskingFollowUp">
+          <span v-if="isAskingFollowUp" class="loading-spinner"></span>
+          <span v-else>Ask Follow-up</span>
+        </button>
+      </div>
+      
+      <div v-if="discussion" class="discussion-box">
+        <h3><i class="fas fa-comment-dots"></i> Discussion:</h3>
+        <p>{{ discussion }}</p>
+      </div>
+    </div>
+    
+    <!-- Database Mode -->
+    <div v-if="mode === 'database'">
+      <h2><i class="fas fa-database"></i> Research Database</h2>
+      
+      <div class="search-bar">
+        <input type="text" v-model="searchQuery" placeholder="Search papers by title or content...">
+        <button class="btn" @click="loadDatabase">
+          <i class="fas fa-sync-alt"></i> Refresh
+        </button>
+      </div>
+      
+      <div v-if="loadingDatabase" class="status-message processing">
+        <i class="fas fa-sync-alt fa-spin"></i> Loading database contents...
+      </div>
+      
+      <div v-if="databaseError" class="status-message error">
+        <i class="fas fa-exclamation-circle"></i> {{ databaseError }}
+      </div>
+      
+      <div v-if="papers.length">
+        <div class="paper-card" v-for="paper in filteredPapers" :key="paper.id" :ref="'paper-'+paper.id">
+          <div class="paper-header" 
+               @click="togglePaperDetails(paper.id)"
+               :class="{ expanded: paper.expanded }">
+            <div>
+              <div class="paper-title">
+                <i class="fas fa-file-pdf"></i> 
+                {{ paper.filename || 'Untitled Document' }}
+                <button class="download-btn"
+                        @click.stop="downloadMarkdown(paper.id, paper.filename)"
+                        title="Download Markdown">
+                  <i class="fas fa-download"></i> MD
+                </button>
+              </div>
+              <div class="paper-meta">
+                <span class="paper-id">ID: {{ paper.id.slice(0,8) }}...</span>
+                <span><i class="fas fa-ruler-combined"></i> {{ formatBytes(paper.content_length) }}</span>
+                <span><i class="fas fa-list"></i> {{ paper.points.length }} points</span>
+              </div>
+            </div>
+            <i class="fas fa-chevron-down toggle-icon"></i>
+          </div>
+          
+          <div v-if="paper.expanded" class="paper-details">
+            <div v-if="paper.detailsLoading" class="status-message processing">
+              <i class="fas fa-sync-alt fa-spin"></i> Loading details...
+            </div>
+            
+            <div v-if="paper.detailsError" class="status-message error">
+              <i class="fas fa-exclamation-circle"></i> {{ paper.detailsError }}
+            </div>
+            
+            <div v-if="paper.fullContent">
+              <h3><i class="fas fa-align-left"></i> Content Preview</h3>
+              <div class="paper-content">
+                {{ paper.fullContent.slice(0, 1000) }}
+                <p v-if="paper.fullContent.length > 1000">... (truncated)</p>
+              </div>
+              
+              <h3><i class="fas fa-bullseye"></i> Key Points</h3>
+              <ul class="points-list">
+                <li v-for="(point, index) in paper.points" :key="index">
+                  {{ point }}
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <div v-if="!papers.length && !loadingDatabase" class="no-papers">
+        <i class="fas fa-inbox"></i>
+        <h3>No Papers in Database</h3>
+        <p>Upload research papers in Review Mode to get started</p>
+        <button class="btn btn-secondary" @click="setMode('review')">
+          <i class="fas fa-arrow-right"></i> Go to Review Mode
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app/static/scriptResearch.js"></script>
+</body>
+</html>
