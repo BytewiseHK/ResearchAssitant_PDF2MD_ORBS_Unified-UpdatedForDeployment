@@ -1,20 +1,18 @@
 # Docker Setup Guide
 
-This project is now Dockerized with **Python 3.12** and includes comprehensive memory optimization for mineru and other ML models.
+**Branch `lightweight-cloud`:** the image is **Python 3.12** + **FastAPI** + **MinerU.net** for PDF→Markdown. There is **no** vendored MinerU, PyTorch, or local ML stack in the container.
 
-## Key Changes
+## Key points
 
-✅ **Python upgraded to 3.12** - Latest stable with better performance  
-✅ **PyTorch updated to 2.5.0** - Full Python 3.12 compatibility  
-✅ **Memory optimizations** - Removed matplotlib, seaborn, onnxruntime (unused visualization/redundant libraries)  
-✅ **Multi-stage Docker build** - Optimized image size (~2.8GB)  
-✅ **Memory limits** - Prevents runaway processes  
+- **Small image** compared to the full local-ML branch (`main`): multi-stage build, `python:3.12-slim`, and a minimal [`requirements.txt`](requirements.txt).
+- **PDF uploads** require a [MinerU.net](https://mineru.net) API key (`MINERU_API_KEY`).
 
 ## Prerequisites
 
 - Docker & Docker Compose (latest versions)
-- At least 4GB RAM available for the container
-- (Optional) OpenRouter API key for custom LLM models
+- **~512MB–1GB RAM** is usually enough for the API process (MinerU runs remotely)
+- `MINERU_API_KEY` for `/upload`
+- (Optional) OpenRouter API key for LLM features (users can also set keys per session)
 
 ## Quick Start
 
@@ -42,14 +40,11 @@ The backend will be available at `http://localhost:8000`
 # Build the image
 docker build -t research-assistant:latest .
 
-# Run the container with memory limits
 docker run -d \
   --name research-assistant \
   -p 8000:8000 \
-  -m 4g \
-  --memory-swap 4g \
-  -e HOST=0.0.0.0 \
   -e PORT=8000 \
+  -e MINERU_API_KEY="your_key" \
   -v $(pwd)/uploads:/app/uploads \
   -v $(pwd)/mineru_output:/app/mineru_output \
   -v $(pwd)/research.db:/app/research.db \
@@ -82,54 +77,25 @@ CORS_ORIGINS=http://localhost:3000,http://localhost:8000
 # Optional: Add your OpenRouter API key
 OPENROUTER_API_KEY=your_key_here
 
-# PDF extraction: "cloud" uses MinerU.net (low RAM); "local" uses in-process MinerU
-PDF_EXTRACT_BACKEND=cloud
+# Required for PDF upload → markdown (MinerU.net)
 MINERU_API_KEY=your_mineru_net_key
 MINERU_API_BASE=https://mineru.net
 MINERU_CLOUD_LANGUAGE=en
 ```
 
-### MinerU.net cloud PDF (Render / low-memory hosts)
+### MinerU.net and timeouts
 
-When `PDF_EXTRACT_BACKEND=cloud`, the API sends PDFs to [MinerU.net](https://mineru.net) using `MINERU_API_KEY`. The web process does not load PyTorch or the local MinerU pipeline.
+PDF conversion runs on MinerU’s servers. The app polls until the job finishes (`MINERU_CLOUD_POLL_MAX_RETRIES` × `MINERU_CLOUD_POLL_INTERVAL_SECONDS`, defaults 100×5s). Very large PDFs can still hit HTTP timeouts; a future async job + polling API would help.
 
-**Docker build (slim image):** pass a build argument so the image installs [`requirements-render.txt`](requirements-render.txt) instead of the full [`requirements.txt`](requirements.txt):
+### Memory and Docker Compose
 
-```bash
-docker build --build-arg REQUIREMENTS_FILE=requirements-render.txt -t research-assistant:cloud .
-```
+1. **Multi-stage build**: install deps in a builder stage, copy only wheels into the runtime image.
+2. **Slim base**: `python:3.12-slim`.
+3. **Compose**: optional `deploy.resources.limits.memory` if you want a hard cap (defaults in `docker-compose.yml` can be lowered for this branch).
 
-On **Render** (Docker service): open the service → **Settings** → **Build** → **Docker Build Arguments** → add `REQUIREMENTS_FILE` = `requirements-render.txt`. Add `MINERU_API_KEY` under **Environment** as a **secret**.
+### Large PDFs
 
-**Timeouts:** cloud conversion polls MinerU.net (`MINERU_CLOUD_POLL_MAX_RETRIES` × `MINERU_CLOUD_POLL_INTERVAL_SECONDS`, default 100×5s ≈ 8.3 minutes ceiling). Very large PDFs may still hit HTTP proxy limits; a future async job + client polling API would avoid that.
-
-### Memory Optimization Features
-
-The Dockerfile and docker-compose.yml include several memory optimizations:
-
-1. **Multi-stage build**: Separates build dependencies from runtime (saves ~500MB)
-2. **Slim base image**: `python:3.12-slim` (~150MB vs ~900MB)
-3. **Optimized environment variables**:
-   - `PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512` - Prevents fragmentation
-   - `TORCH_NUM_THREADS=4` - Optimal for containers
-   - `OMP_NUM_THREADS=4` - NumPy/OpenBLAS threading
-4. **Temporary cache directories**: `/tmp/` caches at runtime, not in image
-5. **Memory limits**: 4GB limit, 2GB reservation in docker-compose
-6. **Lean dependencies**: Removed visualization libraries (matplotlib, seaborn, onnxruntime)
-
-### Memory-Intensive mineru Optimization
-
-For large PDF processing, consider:
-
-```bash
-# Increase memory limits in docker-compose.yml
-deploy:
-  resources:
-    limits:
-      memory: 6G  # Increase from 4G for large files
-    reservations:
-      memory: 4G
-```
+If `/upload` hits HTTP timeouts, raise `MINERU_CLOUD_POLL_MAX_RETRIES` and/or `MINERU_CLOUD_POLL_INTERVAL_SECONDS`, or add an async job flow so the client polls a task id instead of holding one request open.
 
 ## Deployment Platforms
 
@@ -236,15 +202,14 @@ docker build --no-cache -t research-assistant:latest .
 docker logs research-assistant
 ```
 
-## Performance Metrics
+## Performance metrics (this branch)
 
-| Metric | Value |
-|--------|-------|
-| Image size | ~2.8GB |
-| Container memory | 2-4GB recommended |
-| Startup time | 30-60s (model cache warm) |
-| First startup | 1-2 minutes (downloads models) |
-| CPU cores needed | 4+ recommended |
+| Metric | Typical range |
+|--------|----------------|
+| Image size | hundreds of MB (no PyTorch / local models) |
+| Container memory | 512MB–1GB often sufficient for the API |
+| Startup time | a few seconds (no model download on boot) |
+| CPU | 1–2 cores is usually fine |
 
 ## Health Check
 
@@ -269,14 +234,9 @@ docker rmi research-assistant:latest
 docker system prune -a
 ```
 
-## Python 3.12 Compatibility
+## Python 3.12
 
-All packages updated for Python 3.12:
-
-- ✅ PyTorch 2.5.0
-- ✅ Transformers 4.53.2
-- ✅ NumPy 2.2.6
-- ✅ All dependencies verified
+Dependencies in `requirements.txt` are pinned for **Python 3.12** (FastAPI, httpx, OpenAI SDK, etc.).
 
 ## Support
 

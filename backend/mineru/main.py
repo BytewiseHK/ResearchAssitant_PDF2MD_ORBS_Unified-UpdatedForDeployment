@@ -10,7 +10,6 @@ import gc
 import time
 import sys
 import traceback
-import copy
 import secrets
 import shutil
 import threading
@@ -45,8 +44,6 @@ class Settings(BaseSettings):
     openrouter_model: str = "openrouter/free"
     session_cookie_name: str = "ra_sid"
     session_ttl_seconds: int = 2 * 60 * 60  # 2 hours
-    # PDF extraction: "cloud" = MinerU.net API (low RAM); "local" = in-process MinerU pipeline
-    pdf_extract_backend: str = "local"
     mineru_api_key: str = ""
     mineru_api_base: str = "https://mineru.net"
     mineru_cloud_language: str = "en"
@@ -257,109 +254,14 @@ async def get_relevant_papers_by_points(prompt: str):
         conn.close()
 
 # ======================
-# Mineru PDF Processor (LAZY IMPORTS)
+# Markdown helpers (MinerU.net output)
 # ======================
-def cleanup_resources():
-    """Force cleanup of resources between batches"""
-    gc.collect()
-    time.sleep(0.5)
-    # Import pypdfium2 lazily inside the function
-    import pypdfium2
-    pypdfium2.PdfDocument.__del__ = lambda self: None
-
-def sanitize_filename(name, max_length=40):
-    """Strict filename sanitization"""
-    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', name)
-    name = re.sub(r'[\s.]+', '_', name)
-    return name[:max_length].strip('_.')
-
-def safe_prepare_env(output_dir, pdf_file_name):
-    """Create output directories"""
-    try:
-        safe_name = sanitize_filename(pdf_file_name)
-        base_dir = Path(output_dir) / safe_name[:30]
-        
-        image_dir = base_dir / "img"
-        md_dir = base_dir / "out"
-        
-        for d in [base_dir, image_dir, md_dir]:
-            d.mkdir(parents=True, exist_ok=True)
-        
-        return str(image_dir), str(md_dir)
-    except Exception as e:
-        logger.error(f"Directory creation failed: {str(e)}")
-        raise
-
 def clean_md_content(content):
     """Clean up markdown content for better processing"""
     content = re.sub(r'!\[.*?\]\(.*?\)', '', content)
     content = re.sub(r'\{.*?\}', '', content)
     content = re.sub(r'\n{3,}', '\n\n', content)
     return content.strip()
-
-def process_pdf_with_mineru(pdf_path, output_dir):
-    """Process a PDF file with Mineru and return extracted text"""
-    # Lazy import all heavy Mineru dependencies
-    import mineru
-    from mineru.cli.common import convert_pdf_bytes_to_bytes_by_pypdfium2
-    from mineru.data.data_reader_writer import FileBasedDataWriter
-    from mineru.utils.enum_class import MakeMode
-    from mineru.backend.pipeline.pipeline_analyze import doc_analyze as pipeline_doc_analyze
-    from mineru.backend.pipeline.pipeline_middle_json_mkcontent import union_make as pipeline_union_make
-    from mineru.backend.pipeline.model_json_to_middle_json import result_to_middle_json as pipeline_result_to_middle_json
-    import pypdfium2
-    import torch  # Often required by mineru backend
-    original_torch_load = torch.load
-    def patched_load(*args, **kwargs):
-        kwargs.setdefault('weights_only', False)
-        return original_torch_load(*args, **kwargs)
-    torch.load = patched_load
-    
-    try:
-        with open(pdf_path, 'rb') as f:
-            pdf_bytes = f.read()
-        
-        pdf_name = Path(pdf_path).stem
-        image_dir, md_dir = safe_prepare_env(output_dir, pdf_name)
-        
-        try:
-            pdf_bytes = convert_pdf_bytes_to_bytes_by_pypdfium2(pdf_bytes, 0, None)
-        except Exception as e:
-            logger.warning(f"Page conversion failed, using original: {str(e)}")
-        
-        infer_results, all_image_lists, all_pdf_docs, lang_list, ocr_enabled_list = pipeline_doc_analyze(
-            [pdf_bytes], ["en"], parse_method="auto", formula_enable=True, table_enable=False
-        )
-        
-        model_json = copy.deepcopy(infer_results[0])
-        image_writer = FileBasedDataWriter(image_dir)
-        md_writer = FileBasedDataWriter(md_dir)
-        
-        middle_json = pipeline_result_to_middle_json(
-            infer_results[0], all_image_lists[0], all_pdf_docs[0],
-            image_writer, "en", ocr_enabled_list[0], True
-        )
-        
-        pdf_info = middle_json["pdf_info"]
-        md_content_str = pipeline_union_make(pdf_info, MakeMode.MM_MD, os.path.basename(image_dir))
-        md_file_path = os.path.join(md_dir, f"{pdf_name}.md")
-        
-        with open(md_file_path, 'w', encoding='utf-8') as f:
-            f.write(md_content_str)
-        
-        with open(md_file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        cleaned_content = clean_md_content(content)
-        logger.info(f"Successfully processed: {pdf_name}")
-        return cleaned_content
-        
-    except Exception as e:
-        logger.error(f"PDF processing failed: {str(e)}")
-        traceback.print_exc()
-        raise
-    finally:
-        cleanup_resources()
 
 # ======================
 # Chat Utilities
@@ -472,14 +374,6 @@ class _MemoryManagementMiddleware(BaseHTTPMiddleware):
         if self.request_count % 5 == 0 or (time.time() - self.last_gc) > 60:
             gc.collect()
             self.last_gc = time.time()
-
-            # Try to unload unused models from transformers cache
-            try:
-                import torch
-                if hasattr(torch, 'cuda'):
-                    torch.cuda.empty_cache()
-            except Exception:
-                pass
 
         return response
 
@@ -600,12 +494,6 @@ async def cleanup_memory():
     mem_before = process.memory_info().rss / 1024 / 1024  # MB
 
     gc.collect()
-    try:
-        import torch
-        if hasattr(torch, 'cuda'):
-            torch.cuda.empty_cache()
-    except Exception:
-        pass
 
     mem_after = process.memory_info().rss / 1024 / 1024  # MB
     freed = mem_before - mem_after
@@ -767,37 +655,32 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
         output_dir = os.path.join(settings.mineru_output_dir, pdf_id)
         os.makedirs(output_dir, exist_ok=True)
 
-        backend_mode = (settings.pdf_extract_backend or "local").strip().lower()
-        if backend_mode == "cloud":
-            api_key = (settings.mineru_api_key or "").strip()
-            if not api_key:
-                raise HTTPException(
-                    503,
-                    "Cloud PDF extraction is enabled (PDF_EXTRACT_BACKEND=cloud) but "
-                    "MINERU_API_KEY is not set.",
-                )
-            try:
-                raw_md = await convert_pdf_path_to_markdown(
-                    pdf_path,
-                    api_base=settings.mineru_api_base,
-                    api_key=api_key,
-                    language=settings.mineru_cloud_language,
-                    output_dir=output_dir,
-                    max_retries=settings.mineru_cloud_poll_max_retries,
-                    retry_interval=settings.mineru_cloud_poll_interval_seconds,
-                )
-            except MinerUNetError as e:
-                raise HTTPException(502, f"MinerU.net error: {e}") from e
-            except TimeoutError as e:
-                raise HTTPException(
-                    504,
-                    "MinerU.net conversion timed out. For large PDFs, increase "
-                    "MINERU_CLOUD_POLL_MAX_RETRIES / MINERU_CLOUD_POLL_INTERVAL_SECONDS "
-                    "or use a background-job flow.",
-                ) from e
-            text_content = clean_md_content(raw_md)
-        else:
-            text_content = process_pdf_with_mineru(pdf_path, output_dir)
+        api_key = (settings.mineru_api_key or "").strip()
+        if not api_key:
+            raise HTTPException(
+                503,
+                "MINERU_API_KEY is not set. This branch uses MinerU.net for PDF extraction.",
+            )
+        try:
+            raw_md = await convert_pdf_path_to_markdown(
+                pdf_path,
+                api_base=settings.mineru_api_base,
+                api_key=api_key,
+                language=settings.mineru_cloud_language,
+                output_dir=output_dir,
+                max_retries=settings.mineru_cloud_poll_max_retries,
+                retry_interval=settings.mineru_cloud_poll_interval_seconds,
+            )
+        except MinerUNetError as e:
+            raise HTTPException(502, f"MinerU.net error: {e}") from e
+        except TimeoutError:
+            raise HTTPException(
+                504,
+                "MinerU.net conversion timed out. For large PDFs, increase "
+                "MINERU_CLOUD_POLL_MAX_RETRIES / MINERU_CLOUD_POLL_INTERVAL_SECONDS "
+                "or use a background-job flow.",
+            ) from None
+        text_content = clean_md_content(raw_md)
 
         prompt = f"""Extract exactly 5 key research points from this paper.
         Format each point EXACTLY like this:
@@ -1137,3 +1020,10 @@ async def download_markdown(paper_id: str):
     except Exception as e:
         logger.error(f"Download failed: {str(e)}")
         raise HTTPException(500, "Failed to download markdown file")
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    port = int(os.environ.get("PORT", "8000"))
+    uvicorn.run(app, host="0.0.0.0", port=port)

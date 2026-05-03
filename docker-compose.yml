@@ -9,9 +9,10 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # Memory optimization for mineru
       PYTHONUNBUFFERED: "1"
-      PYTORCH_ENABLE_MPS_FALLBACK: "1"
+
+      # MinerU.net (required for /upload PDF extraction)
+      # MINERU_API_KEY: "${MINERU_API_KEY}"
 
       # Application settings
       HOST: "0.0.0.0"

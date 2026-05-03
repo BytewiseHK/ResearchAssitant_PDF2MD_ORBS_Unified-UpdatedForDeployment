@@ -1,5 +1,5 @@
-# For a slim image: Dashboard → Docker Build Args → REQUIREMENTS_FILE=requirements-render.txt
-# (matches PDF_EXTRACT_BACKEND=cloud below; add MINERU_API_KEY as a secret.)
+# Blueprint: Docker backend (lightweight-cloud — MinerU.net only).
+# Add MINERU_API_KEY in the Render dashboard as a secret (not in this file).
 services:
   - type: web
     name: research-assistant-backend
@@ -8,41 +8,16 @@ services:
     ports:
       - 8000
     envVars:
-      # Session & Core
       - key: SESSION_TTL_SECONDS
-        value: "1800"  # Reduced from 7200 (2h) to 30m to free memory
+        value: "1800"
 
-      # PDF via MinerU.net (set MINERU_API_KEY in Render dashboard as a secret)
-      - key: PDF_EXTRACT_BACKEND
-        value: "cloud"
-
-      # Model selection (lightest option)
       - key: OPENROUTER_MODEL
         value: "openrouter/free"
 
-      # CORS
       - key: CORS_ORIGINS
         value: "https://your-frontend.vercel.app"
 
-      # 2GB MEMORY CRITICAL SETTINGS
-      - key: PYTORCH_CUDA_ALLOC_CONF
-        value: "max_split_size_mb:256"
-      - key: TORCH_NUM_THREADS
-        value: "1"
-      - key: NUMEXPR_NUM_THREADS
-        value: "1"
       - key: PYTHONOPTIMIZE
         value: "2"
       - key: MALLOC_TRIM_THRESHOLD_
         value: "128000"
-
-      # Force CPU only (no GPU memory waste)
-      - key: CUDA_VISIBLE_DEVICES
-        value: ""
-
-      # Disable model preloading
-      - key: TRANSFORMERS_OFFLINE
-        value: "0"
-      - key: HF_DATASETS_OFFLINE
-        value: "0"
-

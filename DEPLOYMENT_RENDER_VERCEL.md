@@ -5,31 +5,27 @@ This repo serves the frontend statics from the FastAPI backend, **but you can st
 ## Backend on Render (FastAPI)
 
 ### Recommended service type
-- **Web Service** (Python)
+- **Web Service** with **Docker** (see root `Dockerfile` and `render.yaml`), **or** native Python if you mirror the same `requirements.txt`.
 
-### Build command
+### Build / start (Docker on Render)
 
-```bash
-pip install -r requirements.txt
-```
-
-### Start command
+Build uses the repo `Dockerfile` (multi-stage, Python 3.12). The container starts with:
 
 ```bash
-python backend/mineru/main.py
+python -u backend/mineru/main.py
 ```
 
-### If Render build fails on PyTorch wheels
-- Render may use a newer Python (e.g. 3.14). This repo pins `torch/torchvision/torchaudio` to versions that exist on PyPI for newer Python versions.
-- If you still hit wheel issues (common with native deps like `pydantic-core`), set the Render service’s Python version to a supported version (e.g. 3.13).
-  - This repo includes a `render.yaml` that pins Python to 3.13.
+(which runs **uvicorn** on `PORT`, default 8000).
 
-### Required environment variables
-- **None for OpenRouter by default** (users enter keys per session)
+### Environment variables
+
+- **`MINERU_API_KEY`** (secret): required for **`POST /upload`** PDF → Markdown via [MinerU.net](https://mineru.net).
+- **None for OpenRouter by default** (users can set keys per session)
 - **Optional**
   - `OPENROUTER_BASE_URL` (defaults to `https://openrouter.ai/api/v1`)
   - `SESSION_TTL_SECONDS` (defaults to 7200)
   - `CORS_ORIGINS` (comma-separated, required if frontend is on Vercel; e.g. `https://your-app.vercel.app`)
+  - `MINERU_API_BASE`, `MINERU_CLOUD_LANGUAGE`, poll tuning vars (see `backend/mineru/main.py` `Settings`)
 
 ### Notes for Render
 - Render provides `PORT`; the backend now reads it and binds to `0.0.0.0`.
