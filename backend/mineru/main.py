@@ -22,7 +22,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.middleware.proxy_headers import ProxyHeadersMiddleware
 from starlette.status import HTTP_401_UNAUTHORIZED
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
@@ -431,9 +430,6 @@ async def get_analysis(client: AsyncOpenAI, upload_dir: str, filename: str) -> s
 # Application Setup
 # ======================
 app = FastAPI(title="Unified Research Assistant")
-
-# Honor X-Forwarded-* when behind Render/Vercel proxies
-app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 class _SessionMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
