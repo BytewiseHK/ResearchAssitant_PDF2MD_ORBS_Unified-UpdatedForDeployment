@@ -67,13 +67,4 @@ You have two choices.
 **Before deploying to Vercel with cookies**, update backend CORS to an explicit list like:
 - `https://<your-vercel-app>.vercel.app`
 
-## “Push into an empty git repo” checklist
-
-```bash
-git init
-git add .
-git commit -m "Initial commit"
-git remote add origin <your-empty-repo>
-git push -u origin main
-```
 
