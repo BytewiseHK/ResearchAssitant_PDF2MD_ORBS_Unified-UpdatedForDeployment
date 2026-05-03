@@ -19,6 +19,10 @@ pip install -r requirements.txt
 python backend/mineru/main.py
 ```
 
+### If Render build fails on PyTorch wheels
+- Render may use a newer Python (e.g. 3.14). This repo pins `torch/torchvision/torchaudio` to versions that exist on PyPI for newer Python versions.
+- If you still hit wheel issues, set the Render service’s Python version to a supported version (e.g. 3.12/3.13) using Render’s `PYTHON_VERSION` setting.
+
 ### Required environment variables
 - **None for OpenRouter by default** (users enter keys per session)
 - **Optional**
