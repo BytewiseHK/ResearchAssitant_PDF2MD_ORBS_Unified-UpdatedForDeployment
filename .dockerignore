@@ -1,0 +1,59 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Test and CI
+.github/
+.gitlab-ci.yml
+.travis.yml
+tox.ini
+Makefile
+
+# Documentation
+docs/
+*.md
+LICENSE
+license.txt
+
+# Development
+research.db
+uploads/
+temp/
+mineru_output/
+*.log
+
+# Node (frontend)
+frontend/node_modules/
+frontend/.next/
+frontend/build/
+frontend/dist/

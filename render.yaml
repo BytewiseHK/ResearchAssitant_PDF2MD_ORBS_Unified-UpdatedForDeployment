@@ -1,14 +1,20 @@
 services:
   - type: web
     name: research-assistant-backend
-    runtime: python
-    pythonVersion: "3.13"
-    buildCommand: pip install -r requirements.txt
-    startCommand: python backend/mineru/main.py
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    ports:
+      - 8000
     envVars:
       - key: SESSION_TTL_SECONDS
         value: "7200"
-      # Set this after Vercel deploy:
-      # - key: CORS_ORIGINS
-      #   value: "https://your-frontend.vercel.app"
-
+      - key: OPENROUTER_MODEL
+        value: "openrouter/free"
+      - key: CORS_ORIGINS
+        value: "https://your-frontend.vercel.app"
+      # Memory optimization for Render's limited resources
+      - key: PYTORCH_CUDA_ALLOC_CONF
+        value: "max_split_size_mb:512"
+      - key: TORCH_NUM_THREADS
+        value: "2"
+    # Note: Set OPENROUTER_API_KEY in Render environment after deployment if needed
