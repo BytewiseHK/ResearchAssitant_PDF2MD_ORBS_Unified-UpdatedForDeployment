@@ -21,7 +21,8 @@ python backend/mineru/main.py
 
 ### If Render build fails on PyTorch wheels
 - Render may use a newer Python (e.g. 3.14). This repo pins `torch/torchvision/torchaudio` to versions that exist on PyPI for newer Python versions.
-- If you still hit wheel issues, set the Render service’s Python version to a supported version (e.g. 3.12/3.13) using Render’s `PYTHON_VERSION` setting.
+- If you still hit wheel issues (common with native deps like `pydantic-core`), set the Render service’s Python version to a supported version (e.g. 3.13).
+  - This repo includes a `render.yaml` that pins Python to 3.13.
 
 ### Required environment variables
 - **None for OpenRouter by default** (users enter keys per session)

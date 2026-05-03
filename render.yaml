@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: research-assistant-backend
+    runtime: python
+    pythonVersion: "3.13"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python backend/mineru/main.py
+    envVars:
+      - key: SESSION_TTL_SECONDS
+        value: "7200"
+      # Set this after Vercel deploy:
+      # - key: CORS_ORIGINS
+      #   value: "https://your-frontend.vercel.app"
+
