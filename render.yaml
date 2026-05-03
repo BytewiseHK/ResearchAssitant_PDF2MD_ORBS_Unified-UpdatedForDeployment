@@ -6,15 +6,37 @@ services:
     ports:
       - 8000
     envVars:
+      # Session & Core
       - key: SESSION_TTL_SECONDS
-        value: "7200"
+        value: "1800"  # Reduced from 7200 (2h) to 30m to free memory
+
+      # Model selection (lightest option)
       - key: OPENROUTER_MODEL
         value: "openrouter/free"
+
+      # CORS
       - key: CORS_ORIGINS
         value: "https://your-frontend.vercel.app"
-      # Memory optimization for Render's limited resources
+
+      # 2GB MEMORY CRITICAL SETTINGS
       - key: PYTORCH_CUDA_ALLOC_CONF
-        value: "max_split_size_mb:512"
+        value: "max_split_size_mb:256"
       - key: TORCH_NUM_THREADS
+        value: "1"
+      - key: NUMEXPR_NUM_THREADS
+        value: "1"
+      - key: PYTHONOPTIMIZE
         value: "2"
-    # Note: Set OPENROUTER_API_KEY in Render environment after deployment if needed
+      - key: MALLOC_TRIM_THRESHOLD_
+        value: "128000"
+
+      # Force CPU only (no GPU memory waste)
+      - key: CUDA_VISIBLE_DEVICES
+        value: ""
+
+      # Disable model preloading
+      - key: TRANSFORMERS_OFFLINE
+        value: "0"
+      - key: HF_DATASETS_OFFLINE
+        value: "0"
+

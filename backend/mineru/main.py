@@ -435,6 +435,37 @@ async def get_analysis(client: AsyncOpenAI, upload_dir: str, filename: str) -> s
 # ======================
 app = FastAPI(title="Unified Research Assistant")
 
+# ============================================================================
+# MEMORY MANAGEMENT MIDDLEWARE (Critical for 2GB instances)
+# ============================================================================
+class _MemoryManagementMiddleware(BaseHTTPMiddleware):
+    """Aggressively manage memory on constrained instances"""
+    def __init__(self, app, *args, **kwargs):
+        super().__init__(app, *args, **kwargs)
+        self.request_count = 0
+        self.last_gc = time.time()
+
+    async def dispatch(self, request: Request, call_next):
+        self.request_count += 1
+        response = await call_next(request)
+
+        # Aggressive garbage collection every 5 requests or every 60 seconds
+        if self.request_count % 5 == 0 or (time.time() - self.last_gc) > 60:
+            gc.collect()
+            self.last_gc = time.time()
+
+            # Try to unload unused models from transformers cache
+            try:
+                import torch
+                if hasattr(torch, 'cuda'):
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+        return response
+
+app.add_middleware(_MemoryManagementMiddleware)
+
 class _SessionMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         _purge_expired_sessions()
@@ -526,6 +557,46 @@ async def session_end(request: Request, response: Response):
     _delete_session_dirs(sid)
     response.delete_cookie(key=settings.session_cookie_name, path="/")
     return {"status": "success"}
+
+# ======================
+# Health & Memory Management Endpoints
+# ======================
+@app.get("/health")
+async def health_check():
+    """Lightweight health check (doesn't load models)"""
+    try:
+        conn = sqlite3.connect(settings.database_path)
+        conn.execute("SELECT 1")
+        conn.close()
+        return {"status": "ok", "message": "Service healthy"}
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        raise HTTPException(503, "Service unavailable")
+
+@app.post("/memory/cleanup")
+async def cleanup_memory():
+    """Force garbage collection and cache cleanup"""
+    import psutil
+    process = psutil.Process()
+    mem_before = process.memory_info().rss / 1024 / 1024  # MB
+
+    gc.collect()
+    try:
+        import torch
+        if hasattr(torch, 'cuda'):
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+    mem_after = process.memory_info().rss / 1024 / 1024  # MB
+    freed = mem_before - mem_after
+
+    return {
+        "status": "cleaned",
+        "memory_before_mb": round(mem_before, 2),
+        "memory_after_mb": round(mem_after, 2),
+        "freed_mb": round(freed, 2)
+    }
 
 # ======================
 # API Endpoints

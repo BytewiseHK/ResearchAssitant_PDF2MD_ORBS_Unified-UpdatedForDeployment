@@ -68,3 +68,6 @@ jmespath==1.0.1
 
 # JSON parsing optimization
 jiter==0.10.0
+
+# System monitoring (for memory management on 2GB instances)
+psutil==6.0.0

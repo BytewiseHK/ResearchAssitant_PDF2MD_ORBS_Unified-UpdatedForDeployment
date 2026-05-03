@@ -1,11 +1,10 @@
 # ============================================================================
-# Multi-stage Dockerfile for Research Assistant with Memory Optimization
+# Ultra-lean Dockerfile for 2GB Render instances
 # ============================================================================
-# Stage 1: Builder
+# Stage 1: Builder (slimmed down for 2GB)
 # ============================================================================
 FROM python:3.12-slim as builder
 
-# Set build environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -13,32 +12,29 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /build
 
-# Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    git \
     libopenblas-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements
 COPY requirements.txt .
 
-# Install Python packages to a specific directory
+# Install with minimal memory footprint
 RUN pip install --user \
     --no-warn-script-location \
-    --compile \
+    --no-cache-dir \
     -r requirements.txt
 
 # ============================================================================
-# Stage 2: Runtime (Final Image)
+# Stage 2: Ultra-lean Runtime
 # ============================================================================
 FROM python:3.12-slim
 
 LABEL maintainer="Research Assistant Team"
-LABEL description="Dockerized Research Assistant with Python 3.12 and mineru"
+LABEL description="Ultra-lean for 2GB Render instances"
 
-# Runtime environment variables for memory optimization
+# CRITICAL for 2GB: Aggressive memory settings
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -47,45 +43,40 @@ ENV PYTHONUNBUFFERED=1 \
     TRANSFORMERS_CACHE=/tmp/transformers_cache \
     HF_HOME=/tmp/huggingface_cache \
     PYTORCH_ENABLE_MPS_FALLBACK=1 \
-    PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512 \
-    TORCH_NUM_THREADS=4 \
-    OMP_NUM_THREADS=4
+    PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:256 \
+    TORCH_NUM_THREADS=2 \
+    OMP_NUM_THREADS=2 \
+    NUMEXPR_NUM_THREADS=2 \
+    OPENBLAS_NUM_THREADS=2 \
+    MKL_NUM_THREADS=2 \
+    MALLOC_TRIM_THRESHOLD_=128000 \
+    MALLOC_MMAP_THRESHOLD_=131072 \
+    MALLOC_MMAP_MAX_=65536 \
+    PYTHONOPTIMIZE=2
 
 WORKDIR /app
 
-# Install only runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libgomp1 \
     libopenblas0 \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-# Copy Python packages from builder
 COPY --from=builder /root/.local /root/.local
-
-# Update PATH
 ENV PATH=/root/.local/bin:$PATH
 
-# Copy application code
 COPY . .
 
-# Create necessary directories with proper permissions
-RUN mkdir -p /app/uploads \
-    /app/temp \
-    /app/mineru_output \
-    /tmp/torch_home \
-    /tmp/transformers_cache \
-    /tmp/huggingface_cache \
-    && chmod -R 755 /app/uploads /app/temp /app/mineru_output
+RUN mkdir -p /app/uploads /app/temp /app/mineru_output \
+    /tmp/torch_home /tmp/transformers_cache /tmp/huggingface_cache \
+    && chmod 755 /app/uploads /app/temp /app/mineru_output
 
-# Health check endpoint
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+HEALTHCHECK --interval=60s --timeout=10s --start-period=90s --retries=3 \
     CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
 
-# Expose port
 EXPOSE 8000
 
-# Start application
 CMD ["python", "-u", "backend/mineru/main.py"]
+
 
