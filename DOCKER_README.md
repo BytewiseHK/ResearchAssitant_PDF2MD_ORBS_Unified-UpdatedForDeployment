@@ -81,7 +81,27 @@ CORS_ORIGINS=http://localhost:3000,http://localhost:8000
 
 # Optional: Add your OpenRouter API key
 OPENROUTER_API_KEY=your_key_here
+
+# PDF extraction: "cloud" uses MinerU.net (low RAM); "local" uses in-process MinerU
+PDF_EXTRACT_BACKEND=cloud
+MINERU_API_KEY=your_mineru_net_key
+MINERU_API_BASE=https://mineru.net
+MINERU_CLOUD_LANGUAGE=en
 ```
+
+### MinerU.net cloud PDF (Render / low-memory hosts)
+
+When `PDF_EXTRACT_BACKEND=cloud`, the API sends PDFs to [MinerU.net](https://mineru.net) using `MINERU_API_KEY`. The web process does not load PyTorch or the local MinerU pipeline.
+
+**Docker build (slim image):** pass a build argument so the image installs [`requirements-render.txt`](requirements-render.txt) instead of the full [`requirements.txt`](requirements.txt):
+
+```bash
+docker build --build-arg REQUIREMENTS_FILE=requirements-render.txt -t research-assistant:cloud .
+```
+
+On **Render** (Docker service): open the service → **Settings** → **Build** → **Docker Build Arguments** → add `REQUIREMENTS_FILE` = `requirements-render.txt`. Add `MINERU_API_KEY` under **Environment** as a **secret**.
+
+**Timeouts:** cloud conversion polls MinerU.net (`MINERU_CLOUD_POLL_MAX_RETRIES` × `MINERU_CLOUD_POLL_INTERVAL_SECONDS`, default 100×5s ≈ 8.3 minutes ceiling). Very large PDFs may still hit HTTP proxy limits; a future async job + client polling API would avoid that.
 
 ### Memory Optimization Features
 

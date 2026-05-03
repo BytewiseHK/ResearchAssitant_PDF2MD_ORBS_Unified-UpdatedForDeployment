@@ -27,6 +27,8 @@ from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 from openai import AsyncOpenAI
 
+from mineru_net_client import MinerUNetError, convert_pdf_path_to_markdown
+
 # ======================
 # Configuration
 # ======================
@@ -43,7 +45,15 @@ class Settings(BaseSettings):
     openrouter_model: str = "openrouter/free"
     session_cookie_name: str = "ra_sid"
     session_ttl_seconds: int = 2 * 60 * 60  # 2 hours
-    
+    # PDF extraction: "cloud" = MinerU.net API (low RAM); "local" = in-process MinerU pipeline
+    pdf_extract_backend: str = "local"
+    mineru_api_key: str = ""
+    mineru_api_base: str = "https://mineru.net"
+    mineru_cloud_language: str = "en"
+    # Cloud poll tuning (Render/proxy friendly; large PDFs may need async job pattern later)
+    mineru_cloud_poll_max_retries: int = 100
+    mineru_cloud_poll_interval_seconds: int = 5
+
     class Config:
         env_file = ".env"
 
@@ -63,6 +73,15 @@ if os.environ.get("SESSION_TTL_SECONDS"):
         settings.session_ttl_seconds = int(os.environ["SESSION_TTL_SECONDS"])
     except Exception:
         pass
+for _env_key, _attr in (
+    ("MINERU_CLOUD_POLL_MAX_RETRIES", "mineru_cloud_poll_max_retries"),
+    ("MINERU_CLOUD_POLL_INTERVAL_SECONDS", "mineru_cloud_poll_interval_seconds"),
+):
+    if os.environ.get(_env_key):
+        try:
+            setattr(settings, _attr, int(os.environ[_env_key]))
+        except Exception:
+            pass
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -747,7 +766,38 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
 
         output_dir = os.path.join(settings.mineru_output_dir, pdf_id)
         os.makedirs(output_dir, exist_ok=True)
-        text_content = process_pdf_with_mineru(pdf_path, output_dir)
+
+        backend_mode = (settings.pdf_extract_backend or "local").strip().lower()
+        if backend_mode == "cloud":
+            api_key = (settings.mineru_api_key or "").strip()
+            if not api_key:
+                raise HTTPException(
+                    503,
+                    "Cloud PDF extraction is enabled (PDF_EXTRACT_BACKEND=cloud) but "
+                    "MINERU_API_KEY is not set.",
+                )
+            try:
+                raw_md = await convert_pdf_path_to_markdown(
+                    pdf_path,
+                    api_base=settings.mineru_api_base,
+                    api_key=api_key,
+                    language=settings.mineru_cloud_language,
+                    output_dir=output_dir,
+                    max_retries=settings.mineru_cloud_poll_max_retries,
+                    retry_interval=settings.mineru_cloud_poll_interval_seconds,
+                )
+            except MinerUNetError as e:
+                raise HTTPException(502, f"MinerU.net error: {e}") from e
+            except TimeoutError as e:
+                raise HTTPException(
+                    504,
+                    "MinerU.net conversion timed out. For large PDFs, increase "
+                    "MINERU_CLOUD_POLL_MAX_RETRIES / MINERU_CLOUD_POLL_INTERVAL_SECONDS "
+                    "or use a background-job flow.",
+                ) from e
+            text_content = clean_md_content(raw_md)
+        else:
+            text_content = process_pdf_with_mineru(pdf_path, output_dir)
 
         prompt = f"""Extract exactly 5 key research points from this paper.
         Format each point EXACTLY like this:

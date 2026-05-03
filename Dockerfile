@@ -18,13 +18,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+# Default full stack; for Render + MinerU.net cloud use:
+#   docker build --build-arg REQUIREMENTS_FILE=requirements-render.txt ...
+ARG REQUIREMENTS_FILE=requirements.txt
+COPY ${REQUIREMENTS_FILE} /build/requirements-install.txt
 
 # Install with minimal memory footprint
 RUN pip install --user \
     --no-warn-script-location \
     --no-cache-dir \
-    -r requirements.txt
+    -r /build/requirements-install.txt
 
 # ============================================================================
 # Stage 2: Ultra-lean Runtime

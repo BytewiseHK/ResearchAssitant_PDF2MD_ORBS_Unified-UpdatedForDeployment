@@ -1,3 +1,5 @@
+# For a slim image: Dashboard → Docker Build Args → REQUIREMENTS_FILE=requirements-render.txt
+# (matches PDF_EXTRACT_BACKEND=cloud below; add MINERU_API_KEY as a secret.)
 services:
   - type: web
     name: research-assistant-backend
@@ -9,6 +11,10 @@ services:
       # Session & Core
       - key: SESSION_TTL_SECONDS
         value: "1800"  # Reduced from 7200 (2h) to 30m to free memory
+
+      # PDF via MinerU.net (set MINERU_API_KEY in Render dashboard as a secret)
+      - key: PDF_EXTRACT_BACKEND
+        value: "cloud"
 
       # Model selection (lightest option)
       - key: OPENROUTER_MODEL
