@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     static_path: str = ""
     temp_dir: str = "temp"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_model: str = "openrouter/free"
     session_cookie_name: str = "ra_sid"
     session_ttl_seconds: int = 2 * 60 * 60  # 2 hours
     
@@ -71,6 +72,7 @@ settings.note_path = os.environ.get("NOTE_PATH", str(_FRONTEND_ROOT / "notebook"
 settings.research_path = os.environ.get("RESEARCH_PATH", str(_FRONTEND_ROOT / "research"))
 settings.static_path = os.environ.get("STATIC_PATH", str(_FRONTEND_ROOT / "static"))
 settings.openrouter_base_url = os.environ.get("OPENROUTER_BASE_URL", settings.openrouter_base_url)
+settings.openrouter_model = os.environ.get("OPENROUTER_MODEL", settings.openrouter_model)
 if os.environ.get("SESSION_TTL_SECONDS"):
     try:
         settings.session_ttl_seconds = int(os.environ["SESSION_TTL_SECONDS"])
@@ -390,7 +392,7 @@ async def get_response(client: AsyncOpenAI, messages: List[dict]) -> str:
     """Get response from LLM for general chat"""
     try:
         response = await client.chat.completions.create(
-            model="anthropic/claude-opus-4.1",
+            model=settings.openrouter_model,
             messages=messages,
             temperature=0.7,
             max_tokens=2000
@@ -684,7 +686,7 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
         {text_content[:4000]}"""
 
         response = await client.chat.completions.create(
-            model="anthropic/claude-opus-4.1",
+            model=settings.openrouter_model,
             messages=[{"role": "user", "content": prompt}]
         )
 
@@ -767,7 +769,7 @@ async def generate_points(request: GenerateRequest, http_request: Request):
         5. Cover different aspects of the topic"""
         
         response = await client.chat.completions.create(
-            model="anthropic/claude-opus-4.1",
+            model=settings.openrouter_model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
             max_tokens=2000
@@ -894,7 +896,7 @@ async def discuss_points(request: GenerateRequest, http_request: Request):
         9. Ensure you reference findings from later papers ([4], [5], etc.) not just early ones"""
 
         response = await client.chat.completions.create(
-            model="anthropic/claude-opus-4.1",
+            model=settings.openrouter_model,
             messages=[{"role": "user", "content": discussion_prompt}],
             temperature=0.7,
             max_tokens=4500  # Increased for longer discussion
