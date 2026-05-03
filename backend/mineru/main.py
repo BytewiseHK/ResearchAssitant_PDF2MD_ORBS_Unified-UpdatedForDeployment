@@ -25,22 +25,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.status import HTTP_401_UNAUTHORIZED
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
-import torch
-import pypdfium2
 from openai import AsyncOpenAI
-import mineru
-from mineru.cli.common import convert_pdf_bytes_to_bytes_by_pypdfium2
-from mineru.data.data_reader_writer import FileBasedDataWriter
-from mineru.utils.enum_class import MakeMode
-from mineru.backend.pipeline.pipeline_analyze import doc_analyze as pipeline_doc_analyze
-from mineru.backend.pipeline.pipeline_middle_json_mkcontent import union_make as pipeline_union_make
-from mineru.backend.pipeline.model_json_to_middle_json import result_to_middle_json as pipeline_result_to_middle_json
-
-
-
-
-# Add the backend directory to Python path
-#sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # ======================
 # Configuration
@@ -253,14 +238,15 @@ async def get_relevant_papers_by_points(prompt: str):
         conn.close()
 
 # ======================
-# Mineru PDF Processor
+# Mineru PDF Processor (LAZY IMPORTS)
 # ======================
 def cleanup_resources():
     """Force cleanup of resources between batches"""
     gc.collect()
     time.sleep(0.5)
-    if 'pypdfium2' in globals():
-        pypdfium2.PdfDocument.__del__ = lambda self: None
+    # Import pypdfium2 lazily inside the function
+    import pypdfium2
+    pypdfium2.PdfDocument.__del__ = lambda self: None
 
 def sanitize_filename(name, max_length=40):
     """Strict filename sanitization"""
@@ -294,6 +280,17 @@ def clean_md_content(content):
 
 def process_pdf_with_mineru(pdf_path, output_dir):
     """Process a PDF file with Mineru and return extracted text"""
+    # Lazy import all heavy Mineru dependencies
+    import mineru
+    from mineru.cli.common import convert_pdf_bytes_to_bytes_by_pypdfium2
+    from mineru.data.data_reader_writer import FileBasedDataWriter
+    from mineru.utils.enum_class import MakeMode
+    from mineru.backend.pipeline.pipeline_analyze import doc_analyze as pipeline_doc_analyze
+    from mineru.backend.pipeline.pipeline_middle_json_mkcontent import union_make as pipeline_union_make
+    from mineru.backend.pipeline.model_json_to_middle_json import result_to_middle_json as pipeline_result_to_middle_json
+    import pypdfium2
+    import torch  # Often required by mineru backend
+    
     try:
         with open(pdf_path, 'rb') as f:
             pdf_bytes = f.read()
@@ -471,7 +468,7 @@ if cors_origins_env:
 else:
     # Local dev default (same-origin and common localhost variants)
     cors_origins = [
-        "https://ra-pdf2md-orbs-unified-deploy.vercel.app/",
+        "https://ra-pdf2md-orbs-unified-deploy.vercel.app",   # <-- removed trailing slash
         "http://localhost:8000",
         "http://127.0.0.1:8000",
     ]
@@ -492,11 +489,9 @@ os.makedirs(settings.temp_dir, exist_ok=True)
 os.makedirs(settings.frontend_path, exist_ok=True)
 
 # Mount frontend
-# Mount both frontends
 app.mount("/app/static", StaticFiles(directory=settings.static_path, html=True), name="static")
 app.mount("/app/notebook", StaticFiles(directory=settings.note_path, html=True), name="notebook")
 app.mount("/app/research", StaticFiles(directory=settings.research_path, html=True), name="research")
-
 app.mount("/app", StaticFiles(directory=settings.frontend_path, html=True), name="main_app")
 
 # ======================
@@ -1016,11 +1011,3 @@ async def download_markdown(paper_id: str):
     except Exception as e:
         logger.error(f"Download failed: {str(e)}")
         raise HTTPException(500, "Failed to download markdown file")
-
-if __name__ == "__main__":
-    import uvicorn
-    host = os.environ.get("HOST", "0.0.0.0")
-    port = int(os.environ.get("PORT", "8000"))
-    uvicorn.run(app, host=host, port=port)
-    
-    
