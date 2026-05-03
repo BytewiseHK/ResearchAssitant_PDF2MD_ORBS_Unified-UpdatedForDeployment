@@ -471,6 +471,7 @@ if cors_origins_env:
 else:
     # Local dev default (same-origin and common localhost variants)
     cors_origins = [
+        "https://ra-pdf2md-orbs-unified-deploy.vercel.app/",
         "http://localhost:8000",
         "http://127.0.0.1:8000",
     ]
