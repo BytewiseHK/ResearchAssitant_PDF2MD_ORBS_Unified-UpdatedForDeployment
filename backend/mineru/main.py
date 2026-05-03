@@ -26,7 +26,11 @@ from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 from openai import AsyncOpenAI
 
-from mineru_net_client import MinerUNetError, convert_pdf_path_to_markdown
+try:
+    from .mineru_net_client import MinerUNetError, convert_pdf_path_to_markdown
+except ImportError:
+    # Running as `python backend/mineru/main.py` (no package parent)
+    from mineru_net_client import MinerUNetError, convert_pdf_path_to_markdown
 
 # ======================
 # Configuration
