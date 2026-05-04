@@ -20,6 +20,14 @@ document.addEventListener('DOMContentLoaded', function() {
   
   createApp({
     setup() {
+      if (typeof marked !== 'undefined' && marked.setOptions) {
+        try {
+          marked.setOptions({ breaks: true })
+        } catch (_) {
+          /* older / newer marked builds differ */
+        }
+      }
+
       const mode = ref('review')
       const file = ref(null)
       const isDragging = ref(false)
@@ -35,7 +43,11 @@ document.addEventListener('DOMContentLoaded', function() {
       const discussion = ref('')
       const followUpQuestion = ref('')
       const usedPaperIds = ref([]) // Track which papers were used for points
-      
+
+      const writeCandidates = ref([])
+      const isSuggestingWrite = ref(false)
+      const writeSuggestHint = ref('')
+
       // Database viewer state
       const loadingDatabase = ref(false)
       const databaseError = ref('')
@@ -118,6 +130,26 @@ document.addEventListener('DOMContentLoaded', function() {
         return 'processing'
       })
       
+      const hasWritePaperSelection = computed(() =>
+        writeCandidates.value.some((c) => c.checked)
+      )
+
+      const discussionHtml = computed(() => {
+        const raw = discussion.value || ''
+        if (!raw.trim()) return ''
+        try {
+          if (typeof marked !== 'undefined' && typeof marked.parse === 'function') {
+            return marked.parse(raw)
+          }
+        } catch (e) {
+          console.warn('Discussion markdown render failed', e)
+        }
+        return String(raw)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+      })
+
       const filteredPapers = computed(() => {
         if (!searchQuery.value) return papers.value;
         
@@ -139,11 +171,60 @@ document.addEventListener('DOMContentLoaded', function() {
           generatedPoints.value = []
           discussion.value = ''
           prompt.value = ''
+          writeCandidates.value = []
+          writeSuggestHint.value = ''
+          usedPaperIds.value = []
+          followUpQuestion.value = ''
         } else if (newMode === 'database') {
           loadDatabase()
         } else {
           paperPoints.value = []
           statusMessage.value = ''
+        }
+      }
+
+      function selectAllWriteCandidates() {
+        writeCandidates.value.forEach((c) => { c.checked = true })
+      }
+
+      function deselectAllWriteCandidates() {
+        writeCandidates.value.forEach((c) => { c.checked = false })
+      }
+
+      async function suggestWriteSources() {
+        if (!prompt.value.trim()) return
+        try { await ensureApiKey() } catch (_) { return }
+        isSuggestingWrite.value = true
+        writeSuggestHint.value = ''
+        writeCandidates.value = []
+        try {
+          const response = await fetchWithSession('/write/candidates', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: prompt.value.trim() })
+          })
+          if (!response.ok) {
+            const t = await response.text()
+            throw new Error(t || 'Request failed')
+          }
+          const data = await response.json()
+          if (data.status !== 'success') {
+            throw new Error(data.message || 'Unexpected response')
+          }
+          const list = data.candidates || []
+          writeCandidates.value = list.map((c) => ({
+            ...c,
+            checked: !!c.llm_include
+          }))
+          if (!writeCandidates.value.length) {
+            writeSuggestHint.value = 'No papers in the database yet. Upload PDFs in Review mode, then try again.'
+          } else {
+            writeSuggestHint.value = 'Adjust checkboxes if needed, then run Generate. Discussion and follow-ups use the same paper set after you generate points.'
+          }
+        } catch (error) {
+          writeSuggestHint.value = `Could not suggest sources: ${error.message || error}`
+        } finally {
+          isSuggestingWrite.value = false
         }
       }
       
@@ -238,19 +319,29 @@ document.addEventListener('DOMContentLoaded', function() {
       async function generatePoints() {
         if (!prompt.value.trim()) return
 
+        const selectedIds = writeCandidates.value.filter((c) => c.checked).map((c) => c.id)
+        if (!writeCandidates.value.length) {
+          writeSuggestHint.value = 'Click “Suggest sources (abstracts)” first. The assistant scores each abstract (or opening excerpt), then you pick papers with the checkboxes.'
+          return
+        }
+        if (!selectedIds.length) {
+          writeSuggestHint.value = 'Select at least one paper with the checkboxes before generating points (or use Select all).'
+          return
+        }
+
         try { await ensureApiKey() } catch (_) { return }
         
         isGenerating.value = true
         progress.value = 30
         generatedPoints.value = []
         discussion.value = ''
-        usedPaperIds.value = [] // Reset used papers
+        usedPaperIds.value = []
         
         try {
           const response = await fetchWithSession('/generate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: prompt.value })
+            body: JSON.stringify({ prompt: prompt.value, paper_ids: selectedIds })
           })
           
           progress.value = 70
@@ -275,8 +366,10 @@ document.addEventListener('DOMContentLoaded', function() {
           })
           
           // Store the paper IDs used for these points
-          if (data.paper_ids) {
+          if (data.paper_ids && data.paper_ids.length) {
             usedPaperIds.value = data.paper_ids
+          } else {
+            usedPaperIds.value = selectedIds
           }
         } catch (error) {
           generatedPoints.value = [{
@@ -299,7 +392,7 @@ document.addEventListener('DOMContentLoaded', function() {
         try { await ensureApiKey() } catch (_) { return }
         
         isDiscussing.value = true
-        discussion.value = 'Analyzing research points and generating discussion...'
+        discussion.value = '*Analyzing research points and generating discussion…*'
         
         try {
           const response = await fetchWithSession('/discuss', {
@@ -331,16 +424,16 @@ document.addEventListener('DOMContentLoaded', function() {
         
         isAskingFollowUp.value = true
         const originalDiscussion = discussion.value
-        discussion.value = `${originalDiscussion}\n\n[Question]: ${followUpQuestion.value}\n\n[Answer]: Thinking...`
+        discussion.value = `${originalDiscussion}\n\n### Follow-up question\n${followUpQuestion.value}\n\n### Answer\n*Thinking…*`
         
         try {
           const response = await fetchWithSession('/discuss', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
+            body: JSON.stringify({
               prompt: followUpQuestion.value,
               context: originalDiscussion,
-              paper_ids: usedPaperIds.value // Maintain paper context
+              paper_ids: usedPaperIds.value
             })
           })
           
@@ -349,10 +442,10 @@ document.addEventListener('DOMContentLoaded', function() {
           }
           
           const data = await response.json()
-          discussion.value = `${originalDiscussion}\n\n[Question]: ${followUpQuestion.value}\n\n[Answer]: ${data.discussion}`
+          discussion.value = `${originalDiscussion}\n\n### Follow-up question\n${followUpQuestion.value}\n\n### Answer\n${data.discussion}`
           followUpQuestion.value = ''
         } catch (error) {
-          discussion.value = `${originalDiscussion}\n\n[Question]: ${followUpQuestion.value}\n\n[Error]: ${error.message || 'Failed to answer'}`
+          discussion.value = `${originalDiscussion}\n\n### Follow-up question\n${followUpQuestion.value}\n\n### Error\n${error.message || 'Failed to answer'}`
         } finally {
           isAskingFollowUp.value = false
         }
@@ -503,14 +596,19 @@ document.addEventListener('DOMContentLoaded', function() {
         isGenerating,
         isDiscussing,
         isAskingFollowUp,
+        isSuggestingWrite,
         progress,
         statusMessage,
         paperPoints,
         prompt,
         generatedPoints,
         discussion,
+        discussionHtml,
         followUpQuestion,
         usedPaperIds,
+        writeCandidates,
+        writeSuggestHint,
+        hasWritePaperSelection,
         statusClass,
         loadingDatabase,
         databaseError,
@@ -526,6 +624,9 @@ document.addEventListener('DOMContentLoaded', function() {
         handleDrop,
         processPaper,
         generatePoints,
+        suggestWriteSources,
+        selectAllWriteCandidates,
+        deselectAllWriteCandidates,
         startDiscussion,
         askFollowUp,
         loadDatabase,

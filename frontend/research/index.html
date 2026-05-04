@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Bytewise Research Assistant</title>
   <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <link rel="stylesheet" href="/app/static/styleResearch.css">
 </head>
@@ -129,16 +130,47 @@
     <!-- Write New Mode -->
     <div v-if="mode === 'write'">
       <h2><i class="fas fa-lightbulb"></i> Research Prompt</h2>
+      <p class="write-mode-hint">
+        An LLM reads each paper’s <strong>Abstract</strong> section in the stored markdown (from the PDF pipeline), or a short opening excerpt if no Abstract heading exists, then suggests which sources match your topic. Refine with the checkboxes before generating points.
+      </p>
       
       <textarea v-model="prompt" 
                 placeholder="Enter your research question or topic (e.g., 'Impact of AI on climate change', 'Recent advances in quantum computing')..." 
                 rows="5"></textarea>
       
-      <div class="action-buttons">
-        <button class="btn btn-secondary" @click="generatePoints" :disabled="!prompt.trim() || isGenerating">
-          <span v-if="isGenerating" class="loading-spinner"></span>
-          <span v-else><i class="fas fa-bolt"></i> Generate Research Points</span>
+      <div class="action-buttons write-actions">
+        <button type="button" class="btn btn-tertiary" @click="suggestWriteSources" :disabled="!prompt.trim() || isSuggestingWrite || isGenerating">
+          <span v-if="isSuggestingWrite" class="loading-spinner"></span>
+          <span v-else><i class="fas fa-filter"></i> Suggest sources (abstracts)</span>
         </button>
+        <button type="button" class="btn btn-secondary" @click="generatePoints" :disabled="!prompt.trim() || !hasWritePaperSelection || isGenerating || isSuggestingWrite">
+          <span v-if="isGenerating" class="loading-spinner"></span>
+          <span v-else><i class="fas fa-bolt"></i> Generate research points</span>
+        </button>
+      </div>
+      <p v-if="writeSuggestHint" class="write-suggest-hint">{{ writeSuggestHint }}</p>
+      <div v-if="writeCandidates.length" class="write-paper-panel">
+        <div class="write-paper-panel-head">
+          <h3><i class="fas fa-check-square"></i> Sources for this run</h3>
+          <div class="write-paper-bulk">
+            <button type="button" class="btn btn-small" @click="selectAllWriteCandidates">Select all</button>
+            <button type="button" class="btn btn-small" @click="deselectAllWriteCandidates">Deselect all</button>
+          </div>
+        </div>
+        <ul class="write-paper-list">
+          <li v-for="c in writeCandidates" :key="c.id" class="write-paper-row">
+            <label class="write-paper-label">
+              <input type="checkbox" v-model="c.checked" />
+              <span class="write-paper-title">{{ c.filename }}</span>
+              <span class="write-paper-score" :title="c.llm_note || ''">score {{ c.llm_score }}</span>
+            </label>
+            <p v-if="c.llm_note" class="write-paper-note">{{ c.llm_note }}</p>
+            <details class="write-paper-abstract">
+              <summary>Abstract / excerpt ({{ c.source_kind === 'abstract' ? 'from Abstract' : 'opening excerpt' }})</summary>
+              <pre class="write-paper-abstract-body">{{ c.abstract }}</pre>
+            </details>
+          </li>
+        </ul>
       </div>
       
       <div v-if="isGenerating" class="progress-bar">
@@ -196,8 +228,8 @@
       </div>
       
       <div v-if="discussion" class="discussion-box">
-        <h3><i class="fas fa-comment-dots"></i> Discussion:</h3>
-        <p>{{ discussion }}</p>
+        <h3><i class="fas fa-comment-dots"></i> Discussion</h3>
+        <div class="discussion-md" v-html="discussionHtml"></div>
       </div>
     </div>
     

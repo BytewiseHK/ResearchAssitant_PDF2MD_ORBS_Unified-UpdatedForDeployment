@@ -159,6 +159,7 @@ def _require_openrouter_client(st: _SessionState) -> AsyncOpenAI:
 class GenerateRequest(BaseModel):
     prompt: str
     paper_ids: Optional[List[str]] = None
+    context: Optional[str] = None  # prior discussion text for follow-up /discuss calls
 
 class ChatMessage(BaseModel):
     role: str
@@ -213,49 +214,253 @@ def store_paper(paper_id, filename, content, points):
         if conn:
             conn.close()
 
-async def get_relevant_papers_by_points(prompt: str):
+def _parse_points_field(points_field) -> List[str]:
+    if points_field is None:
+        return []
+    if isinstance(points_field, list):
+        return [str(x) for x in points_field]
+    if isinstance(points_field, str):
+        try:
+            pl = json.loads(points_field)
+            if isinstance(pl, list):
+                return [str(x) for x in pl]
+            return [str(pl)] if pl else []
+        except json.JSONDecodeError:
+            return [points_field] if points_field.strip() else []
+    return []
+
+
+def extract_abstract_from_markdown(md: Optional[str], max_chars: int = 4500) -> str:
+    """Text under an 'Abstract' markdown heading until the next # heading (MinerU-style MD)."""
+    if not md or not str(md).strip():
+        return ""
+    text = str(md)
+    m = re.search(r"(?im)^#{1,6}\s*abstract\s*\n?", text)
+    if not m:
+        return ""
+    rest = text[m.end() :]
+    nm = re.search(r"(?im)^#{1,6}\s+\S", rest)
+    if nm:
+        body = rest[: nm.start()].strip()
+    else:
+        body = rest.strip()
+    body = clean_md_content(body)
+    if len(body) > max_chars:
+        return body[:max_chars].rstrip() + "…"
+    return body
+
+
+def opening_excerpt_for_ranking(md: Optional[str], max_chars: int = 1600) -> str:
+    """Fallback when no Abstract section exists."""
+    return clean_md_content(md or "")[:max_chars]
+
+
+def _load_all_paper_rows() -> List[sqlite3.Row]:
+    conn = sqlite3.connect(settings.database_path)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("SELECT id, filename, content, points FROM papers").fetchall()
+    conn.close()
+    return list(rows)
+
+
+def _papers_from_ids_ordered(paper_ids: List[str]) -> List[dict]:
+    if not paper_ids:
+        return []
+    conn = sqlite3.connect(settings.database_path)
+    conn.row_factory = sqlite3.Row
+    rows = {
+        r["id"]: dict(r)
+        for r in conn.execute(
+            "SELECT id, filename, content, points FROM papers WHERE id IN ({})".format(
+                ",".join("?" * len(paper_ids))
+            ),
+            tuple(paper_ids),
+        ).fetchall()
+    }
+    conn.close()
+    ordered = []
+    for pid in paper_ids:
+        if pid in rows:
+            ordered.append(rows[pid])
+    return ordered
+
+
+def _parse_rankings_json(raw: str) -> Optional[List[dict]]:
+    if not raw:
+        return None
+    t = raw.strip()
+    if "```" in t:
+        fence = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", t, re.I)
+        if fence:
+            t = fence.group(1).strip()
     try:
-        conn = sqlite3.connect(settings.database_path)
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
-        
-        c.execute("SELECT id, filename, content, points FROM papers")
-        papers = c.fetchall()
-        
-        if not papers:
-            return []
+        obj = json.loads(t)
+    except json.JSONDecodeError:
+        brace = re.search(r"\{[\s\S]*\}\s*$", t)
+        if not brace:
+            return None
+        try:
+            obj = json.loads(brace.group(0))
+        except json.JSONDecodeError:
+            return None
+    rankings = obj.get("rankings") if isinstance(obj, dict) else None
+    if not isinstance(rankings, list):
+        return None
+    out = []
+    for item in rankings:
+        if not isinstance(item, dict):
+            continue
+        pid = item.get("id")
+        if not pid or not isinstance(pid, str):
+            continue
+        try:
+            sc = int(float(item.get("score", 50)))
+        except (TypeError, ValueError):
+            sc = 50
+        sc = max(0, min(100, sc))
+        out.append(
+            {
+                "id": pid,
+                "include": bool(item.get("include", True)),
+                "score": sc,
+                "note": str(item.get("note", ""))[:200],
+            }
+        )
+    return out or None
 
-        processed_papers = []
-        for paper in papers:
-            try:
-                points = json.loads(paper['points']) if paper['points'] else []
-            except json.JSONDecodeError:
-                points = [paper['points']] if paper['points'] else []
-            
-            relevance_score = sum(
-                1 for point in points 
-                if isinstance(point, str) and prompt.lower() in point.lower()
-            )
-            
-            processed_papers.append({
-                'id': paper['id'],
-                'filename': paper['filename'],
-                'content': paper['content'],
-                'points': points,
-                'relevance': relevance_score
-            })
-        
-        return sorted(
-            processed_papers,
-            key=lambda x: x['relevance'],
-            reverse=True
-        )[:len(processed_papers)-1]
 
+async def llm_rank_papers_by_abstracts(
+    client: AsyncOpenAI, user_prompt: str, summaries: List[dict]
+) -> Dict[str, dict]:
+    """summaries: {id, filename, abstract, source_kind}; returns id -> {include, score, note}."""
+    if not summaries:
+        return {}
+    mini = [
+        {
+            "id": s["id"],
+            "filename": (s.get("filename") or "")[:200],
+            "abstract": (s.get("abstract") or "")[:3200],
+            "source_kind": s.get("source_kind", "abstract"),
+        }
+        for s in summaries
+    ]
+    sys_msg = (
+        "You classify academic papers for relevance to a user's research topic. "
+        "You only see titles and abstract (or opening excerpt) text — not full PDFs. "
+        "Return strict JSON only."
+    )
+    user_msg = f"""Research topic / question:
+{user_prompt.strip()[:4000]}
+
+Papers (JSON array; source_kind is 'abstract' if parsed from an Abstract heading, else 'opening_excerpt'):
+{json.dumps(mini, ensure_ascii=False)}
+
+Return JSON with exactly this shape (one entry per paper id, no extras):
+{{"rankings":[{{"id":"<paper uuid>","include":true|false,"score":0-100,"note":"<=25 words"}}]}}
+
+Rules:
+- include=true when the paper would materially help the user explore or answer the topic.
+- score reflects match strength (0 irrelevant, 100 central).
+- Use the exact "id" strings from the input."""
+    raw_content = ""
+    try:
+        response = await client.chat.completions.create(
+            model=settings.openrouter_model,
+            messages=[
+                {"role": "system", "content": sys_msg},
+                {"role": "user", "content": user_msg},
+            ],
+            temperature=0.2,
+            max_tokens=4000,
+            response_format={"type": "json_object"},
+        )
+        raw_content = (response.choices[0].message.content or "").strip()
     except Exception as e:
-        logger.error(f"Relevant papers retrieval failed: {str(e)}")
-        raise HTTPException(500, "Paper retrieval error")
-    finally:
-        conn.close()
+        logger.warning(f"LLM ranking (json_object) failed, retrying without: {e}")
+        try:
+            response = await client.chat.completions.create(
+                model=settings.openrouter_model,
+                messages=[
+                    {"role": "system", "content": sys_msg},
+                    {"role": "user", "content": user_msg},
+                ],
+                temperature=0.2,
+                max_tokens=4000,
+            )
+            raw_content = (response.choices[0].message.content or "").strip()
+        except Exception as e2:
+            logger.error(f"LLM ranking failed: {e2}")
+            return {}
+
+    rankings = _parse_rankings_json(raw_content)
+    if not rankings:
+        logger.warning("Could not parse rankings JSON; including all papers with neutral score")
+        return {
+            s["id"]: {"include": True, "score": 50, "note": "parse fallback"}
+            for s in summaries
+        }
+
+    by_id = {r["id"]: r for r in rankings}
+    for s in summaries:
+        if s["id"] not in by_id:
+            by_id[s["id"]] = {"include": True, "score": 45, "note": "model omitted id"}
+    return by_id
+
+
+async def build_write_candidates(client: AsyncOpenAI, user_prompt: str) -> List[dict]:
+    rows = _load_all_paper_rows()
+    summaries = []
+    for row in rows:
+        md = row["content"] or ""
+        ab = extract_abstract_from_markdown(md)
+        if not (ab or "").strip():
+            ab = opening_excerpt_for_ranking(md)
+            sk = "opening_excerpt"
+        else:
+            sk = "abstract"
+        summaries.append(
+            {
+                "id": row["id"],
+                "filename": row["filename"] or "Untitled",
+                "abstract": ab,
+                "source_kind": sk,
+            }
+        )
+    if not summaries:
+        return []
+    rank_map = await llm_rank_papers_by_abstracts(client, user_prompt, summaries)
+    out = []
+    for s in summaries:
+        r = rank_map.get(s["id"], {"include": True, "score": 50, "note": ""})
+        try:
+            sc = int(float(r.get("score", 50)))
+        except (TypeError, ValueError):
+            sc = 50
+        sc = max(0, min(100, sc))
+        out.append(
+            {
+                "id": s["id"],
+                "filename": s["filename"],
+                "abstract": s["abstract"],
+                "source_kind": s["source_kind"],
+                "llm_include": bool(r.get("include", True)),
+                "llm_score": sc,
+                "llm_note": str(r.get("note", "")),
+            }
+        )
+    out.sort(key=lambda x: -x["llm_score"])
+    return out
+
+
+async def select_papers_for_prompt_llm(client: AsyncOpenAI, user_prompt: str) -> List[dict]:
+    """Papers to use when caller did not pass explicit paper_ids (server-side fallback)."""
+    cand = await build_write_candidates(client, user_prompt)
+    picked = [c for c in cand if c["llm_include"]]
+    if not picked:
+        picked = cand[: max(1, min(5, len(cand)))]
+    ids = [c["id"] for c in picked]
+    return _papers_from_ids_ordered(ids)
+
 
 # ======================
 # Markdown helpers (MinerU.net output)
@@ -742,187 +947,219 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
         except Exception as e:
             logger.warning(f"Temp file cleanup failed: {str(e)}")
 
+
+@app.post("/write/candidates")
+async def write_paper_candidates(request: GenerateRequest, http_request: Request):
+    """LLM ranks all DB papers using abstract (or opening excerpt); for Write-mode checkbox UI."""
+    if not (request.prompt or "").strip():
+        raise HTTPException(status_code=400, detail="prompt is required")
+    st = _get_or_create_session(http_request.state.session_id)
+    client = _require_openrouter_client(st)
+    candidates = await build_write_candidates(client, request.prompt.strip())
+    return {"status": "success", "candidates": candidates}
+
+
 @app.post("/generate")
 async def generate_points(request: GenerateRequest, http_request: Request):
-    """Generate research points from papers"""
+    """Generate research points from papers (prefer explicit paper_ids from user checkboxes)."""
     try:
         st = _get_or_create_session(http_request.state.session_id)
         client = _require_openrouter_client(st)
-        relevant_papers = await get_relevant_papers_by_points(request.prompt)
+        if request.paper_ids and len(request.paper_ids) > 0:
+            relevant_papers = _papers_from_ids_ordered(request.paper_ids)
+        else:
+            relevant_papers = await select_papers_for_prompt_llm(client, request.prompt)
+
         if not relevant_papers:
             return {
                 "status": "success",
-                "points": [{
-                    "formatted_text": "No relevant papers found",
-                    "clean_source": ""
-                }]
+                "points": [
+                    {
+                        "formatted_text": "No papers in the database yet. Upload PDFs in Review mode first.",
+                        "clean_source": "",
+                        "raw_data": {},
+                    }
+                ],
+                "paper_ids": [],
             }
 
-        context = "\n\n".join(
-            f"PAPER {i+1}: {p['filename']}\n"
-            f"KEY POINTS:\n" + "\n".join(p['points'][:5]) + "\n"
-            f"CONTENT EXCERPT:\n{p['content'][:4000]}..."
-            for i, p in enumerate(relevant_papers[:len(relevant_papers)-1])
-        )
+        context_parts = []
+        for i, p in enumerate(relevant_papers):
+            pts = _parse_points_field(p.get("points"))
+            excerpt = (p.get("content") or "")[:4500]
+            context_parts.append(
+                f"PAPER {i+1}: {p.get('filename', 'Untitled')}\n"
+                f"KEY POINTS:\n" + "\n".join(pts[:12]) + "\n"
+                f"CONTENT EXCERPT:\n{excerpt}...\n"
+            )
+        context = "\n\n".join(context_parts)
+        n_papers = len(relevant_papers)
 
         prompt = f"""Generate 5-7 high-quality research points about: {request.prompt}
-        
-        Using these papers as sources:
-        {context}
-        
-        FORMATTING RULES:
-        1. Each point must start with • 
-        2. Include (Source: Paper X | *name of the paper and its author* | APA 7 Citation of paper) where X is the paper number
-        3. Keep points concise but informative
-        4. Compare/contrast different papers when relevant
-        5. Cover different aspects of the topic"""
-        
+
+Using these {n_papers} papers as sources (numbered Paper 1 … Paper {n_papers}):
+{context}
+
+FORMATTING RULES:
+1. Each point must start with • 
+2. Include (Source: Paper X | *name of the paper and its author* | APA 7 Citation of paper) where X matches the paper number above (use multiple Paper numbers if a point synthesizes several sources).
+3. Keep points concise but informative
+4. Compare/contrast different papers when relevant
+5. Cover different aspects of the topic"""
+
         response = await client.chat.completions.create(
             model=settings.openrouter_model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
-            max_tokens=2000
+            max_tokens=2000,
         )
 
         raw_points = [
-            line.strip() 
-            for line in response.choices[0].message.content.split('\n') 
-            if line.strip().startswith('•')
+            line.strip()
+            for line in (response.choices[0].message.content or "").split("\n")
+            if line.strip().startswith("•")
         ][:7]
 
-        paper_map = {
-            f"Paper{i+1}": p['id']
-            for i, p in enumerate(relevant_papers[:3])
-        }
+        paper_map = {f"Paper{i+1}": p["id"] for i, p in enumerate(relevant_papers)}
 
         points = []
         for line in raw_points:
-            source_matches = re.findall(r'\(Source: (Paper\d+(?:, Paper\d+)*)\)', line)
+            source_matches = re.findall(r"\(Source: (Paper\d+(?:, Paper\d+)*)\)", line)
             source_papers = []
             if source_matches:
-                for match in source_matches[0].split(', '):
+                for match in source_matches[0].split(", "):
+                    match = match.strip()
                     if match in paper_map:
-                        source_papers.append({
-                            'id': paper_map[match],
-                            'name': next(
-                                p['filename'] for p in relevant_papers 
-                                if p['id'] == paper_map[match]
-                            )
-                        })
+                        pid = paper_map[match]
+                        source_papers.append(
+                            {
+                                "id": pid,
+                                "name": next(
+                                    (p["filename"] for p in relevant_papers if p["id"] == pid),
+                                    match,
+                                ),
+                            }
+                        )
 
-            point_text = line.split('• ')[1].split(' (Source:')[0].strip()
-            
-            points.append({
-                "formatted_text": line,
-                "raw_data": {
-                    "text": point_text,
-                    "sources": source_papers,
-                    "source": ", ".join(p['name'] for p in source_papers),
-                    "sourceIds": [p['id'] for p in source_papers]
+            if "• " in line:
+                point_text = line.split("• ", 1)[1].split(" (Source:")[0].strip()
+            else:
+                point_text = line.lstrip("•").strip()
+
+            points.append(
+                {
+                    "formatted_text": line,
+                    "raw_data": {
+                        "text": point_text,
+                        "sources": source_papers,
+                        "source": ", ".join(p["name"] for p in source_papers),
+                        "sourceIds": [p["id"] for p in source_papers],
+                    },
                 }
-            })
+            )
 
         return {
-            "status": "success", 
+            "status": "success",
             "points": points,
-            "paper_ids": list(paper_map.values())
+            "paper_ids": [p["id"] for p in relevant_papers],
         }
 
     except Exception as e:
         logger.error(f"Generation failed: {str(e)}")
         return {
             "status": "error",
-            "points": [{
-                "formatted_text": f"Error: {str(e)}",
-                "clean_source": ""
-            }]
+            "points": [
+                {
+                    "formatted_text": f"Error: {str(e)}",
+                    "clean_source": "",
+                }
+            ],
         }
 
 @app.post("/discuss")
 async def discuss_points(request: GenerateRequest, http_request: Request):
-    """Generate a research discussion analyzing ALL available papers"""
+    """Discussion from selected papers, or abstract-ranked fallback; supports follow-up via context."""
     try:
         st = _get_or_create_session(http_request.state.session_id)
         client = _require_openrouter_client(st)
-        if request.paper_ids:
-            # Get specific papers if IDs provided
-            papers = []
-            conn = sqlite3.connect(settings.database_path)
-            conn.row_factory = sqlite3.Row
-            for paper_id in request.paper_ids:
-                paper = conn.execute(
-                    "SELECT id, filename, content, points FROM papers WHERE id = ?",
-                    (paper_id,)
-                ).fetchone()
-                if paper:
-                    papers.append(dict(paper))
-            conn.close()
+        if request.paper_ids and len(request.paper_ids) > 0:
+            papers = _papers_from_ids_ordered(request.paper_ids)
         else:
-            # Get ALL relevant papers for the topic
-            papers = await get_relevant_papers_by_points(request.prompt)
-            # Remove the slicing that limits to first few papers
-            # Previously this was: papers[:len(papers)-1] which excluded papers
+            papers = await select_papers_for_prompt_llm(client, request.prompt)
 
         if not papers:
             return {
                 "status": "success",
-                "discussion": "No relevant papers found for discussion"
+                "discussion": "No relevant papers found for discussion. Add papers to the database or broaden your topic.",
             }
 
-        # Build context from ALL papers
+        excerpt_limit = 2200 if (request.context and request.context.strip()) else 4000
         context_parts = []
         for i, p in enumerate(papers):
-            # Properly handle points (could be string JSON or list)
-            if isinstance(p['points'], str):
-                try:
-                    points_list = json.loads(p['points'])
-                except json.JSONDecodeError:
-                    points_list = [p['points']] if p['points'] else []
-            else:
-                points_list = p['points'] or []
-            
-            paper_context = f"PAPER {i+1} - {p['filename']}:\n"
-            paper_context += f"KEY POINTS:\n" + "\n".join(points_list[:100]) + "\n"  # Limit points to avoid token overflow
-            paper_context += f"CONTENT EXCERPT:\n{p['content'][:4000]}...\n"  # Reduced excerpt length
+            points_list = _parse_points_field(p.get("points"))
+            paper_context = f"PAPER {i+1} - {p.get('filename', 'Untitled')}:\n"
+            paper_context += "KEY POINTS:\n" + "\n".join(points_list[:80]) + "\n"
+            paper_context += f"CONTENT EXCERPT:\n{(p.get('content') or '')[:excerpt_limit]}...\n"
             context_parts.append(paper_context)
 
-        context = "\n\n".join(context_parts)
+        papers_blob = "\n\n".join(context_parts)
+        n = len(papers)
 
-        discussion_prompt = f"""Generate a comprehensive discussion about: {request.prompt}
-        
-        Analyze ALL {len(papers)} provided research papers to provide a thorough examination:
-        {context}
-        
-        GUIDELINES:
-        1. Start with an overview synthesizing findings from ALL papers
-        2. Compare and contrast perspectives across ALL papers, not just the first few
-        3. Identify patterns, contradictions, and consensus across the entire corpus
-        4. Highlight areas of agreement/disagreement among ALL sources
-        5. Use [1], [2], [3], etc. for citations matching ALL paper numbers
-        6. Discuss limitations and future directions considering ALL evidence
-        7. Maintain academic tone but avoid jargon
-        8. Length: ~800-1000 words to adequately cover ALL materials
-        9. Ensure you reference findings from later papers ([4], [5], etc.) not just early ones"""
+        if request.context and request.context.strip():
+            ctx_trim = request.context.strip()[:12000]
+            discussion_prompt = f"""You are continuing a research assistant session.
+
+You have {n} papers (cite as [1]–[{n}] matching the order below). Answer the follow-up using markdown (## headings, **bold**, lists when helpful).
+
+SOURCE MATERIALS:
+{papers_blob}
+
+PRIOR DISCUSSION:
+{ctx_trim}
+
+FOLLOW-UP QUESTION:
+{request.prompt.strip()[:4000]}
+
+Guidelines:
+- Ground the answer in the prior discussion and papers; cite as [1], [2], etc.
+- If a short factual answer suffices, stay brief; otherwise about 350–900 words."""
+        else:
+            discussion_prompt = f"""Generate a comprehensive discussion about: {request.prompt}
+
+Analyze ALL {n} provided research papers:
+{papers_blob}
+
+GUIDELINES:
+1. Start with an overview synthesizing findings from ALL papers
+2. Compare and contrast perspectives across ALL papers, not just the first few
+3. Identify patterns, contradictions, and consensus across the entire corpus
+4. Highlight areas of agreement/disagreement among ALL sources
+5. Use [1], [2], [3], etc. for citations matching ALL paper numbers
+6. Discuss limitations and future directions considering ALL evidence
+7. Maintain academic tone but avoid jargon
+8. Use markdown (## sections, **emphasis**) for readability
+9. Length: ~800–1200 words when appropriate
+10. Reference findings across the full set of papers, not only early ones"""
 
         response = await client.chat.completions.create(
             model=settings.openrouter_model,
             messages=[{"role": "user", "content": discussion_prompt}],
             temperature=0.7,
-            max_tokens=4500  # Increased for longer discussion
+            max_tokens=4500,
         )
 
         return {
             "status": "success",
-            "discussion": response.choices[0].message.content,
-            "sources": [p['filename'] for p in papers],
-            "total_papers_analyzed": len(papers)
+            "discussion": response.choices[0].message.content or "",
+            "sources": [p["filename"] for p in papers],
+            "total_papers_analyzed": len(papers),
         }
 
     except Exception as e:
         logger.error(f"Discussion failed: {str(e)}")
         return {
             "status": "error",
-            "discussion": f"Error generating discussion: {str(e)}"
+            "discussion": f"Error generating discussion: {str(e)}",
         }
 
 @app.get("/database")
