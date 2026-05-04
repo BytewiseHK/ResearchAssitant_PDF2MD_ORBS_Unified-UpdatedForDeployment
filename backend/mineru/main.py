@@ -15,11 +15,12 @@ import shutil
 import threading
 from pathlib import Path
 from typing import List, Optional, Dict
+from urllib.parse import quote
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.status import HTTP_401_UNAUTHORIZED
 from pydantic import BaseModel
@@ -1152,6 +1153,7 @@ GUIDELINES:
             "status": "success",
             "discussion": response.choices[0].message.content or "",
             "sources": [p["filename"] for p in papers],
+            "paper_ids": [p["id"] for p in papers],
             "total_papers_analyzed": len(papers),
         }
 
@@ -1223,42 +1225,68 @@ async def view_paper_details(paper_id: str):
         logger.error(f"Paper details failed: {str(e)}")
         raise HTTPException(500, str(e))
 
+def _safe_download_basename(original_filename: str) -> str:
+    """Stem from stored DB filename (usually the PDF name), ASCII-safe for Content-Disposition."""
+    base = os.path.splitext((original_filename or "paper").strip())[0] or "paper"
+    safe = re.sub(r"[^\w\-\.\(\)\s]+", "_", base, flags=re.UNICODE)
+    safe = re.sub(r"\s+", " ", safe).strip(" ._") or "paper"
+    return safe[:180]
+
+
 @app.get("/download/{paper_id}")
 async def download_markdown(paper_id: str):
-    """Download markdown version of a paper"""
+    """Download markdown; filename uses the original upload name (not MinerU internal names like full.md)."""
     try:
         conn = sqlite3.connect(settings.database_path)
+        conn.row_factory = sqlite3.Row
         paper = conn.execute(
-            "SELECT filename FROM papers WHERE id = ?", 
-            (paper_id,)
+            "SELECT filename, content FROM papers WHERE id = ?",
+            (paper_id,),
         ).fetchone()
         conn.close()
-        
+
         if not paper:
             raise HTTPException(404, "Paper not found")
-        
+
+        download_stem = _safe_download_basename(paper["filename"] or "paper")
+        download_name = f"{download_stem}.md"
+        body = paper["content"] or ""
+
+        if body.strip():
+            disp_ascii = f'attachment; filename="{download_name}"'
+            disp_utf8 = f"filename*=UTF-8''{quote(download_name)}"
+            return Response(
+                content=body.encode("utf-8"),
+                media_type="text/markdown; charset=utf-8",
+                headers={"Content-Disposition": f"{disp_ascii}; {disp_utf8}"},
+            )
+
         paper_dir = os.path.join(settings.mineru_output_dir, paper_id)
         if not os.path.exists(paper_dir):
             raise HTTPException(404, "Paper directory not found")
-        
+
         md_files = []
         for root, _, files in os.walk(paper_dir):
             for file in files:
-                if file.endswith('.md'):
+                if file.endswith(".md"):
                     md_files.append(os.path.join(root, file))
-        
+
         if not md_files:
             raise HTTPException(404, "No markdown files found")
-        
-        md_path = md_files[0]
-        md_filename = os.path.basename(md_path)
-        
+
+        def _sort_key(p: str) -> tuple:
+            base = os.path.basename(p).lower()
+            is_full = 1 if base == "full.md" else 0
+            return (is_full, -os.path.getsize(p))
+
+        md_path = sorted(md_files, key=_sort_key)[0]
+
         return FileResponse(
             md_path,
             media_type="text/markdown",
-            filename=md_filename
+            filename=download_name,
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:

@@ -384,6 +384,20 @@
     .discussion-md a {
       color: #5ee0a0;
     }
+    .discussion-md .citation.discussion-cite {
+      cursor: pointer;
+      margin: 0 1px;
+      display: inline;
+    }
+    .discussion-cite-hint {
+      font-size: 0.88rem;
+      color: #999999;
+      margin: 0 0 14px 0;
+      line-height: 1.45;
+    }
+    .discussion-cite-hint .example-pill {
+      cursor: default;
+    }
     .discussion-md blockquote {
       margin: 0.75em 0;
       padding-left: 12px;

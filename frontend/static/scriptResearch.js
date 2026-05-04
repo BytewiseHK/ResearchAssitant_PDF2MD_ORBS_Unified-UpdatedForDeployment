@@ -134,21 +134,60 @@ document.addEventListener('DOMContentLoaded', function() {
         writeCandidates.value.some((c) => c.checked)
       )
 
+      /** Turn [1]…[n] into green citation chips (same order as /discuss paper list). Skips [2024]-style brackets. */
+      function linkifyDiscussionCitations(html, paperIdsOrdered) {
+        const ids = paperIdsOrdered || []
+        if (!ids.length || !html) return html
+        const maxIdx = ids.length
+        const parts = html.split(/(<pre[\s\S]*?<\/pre>)/gi)
+        return parts.map((part, i) => {
+          if (i % 2 === 1) return part
+          return part.replace(/\[(\d+)\]/g, (full, numStr) => {
+            const n = parseInt(numStr, 10)
+            if (n < 1 || n > maxIdx) return full
+            const pid = ids[n - 1]
+            if (!pid) return full
+            return `<span class="citation discussion-cite" data-paper-id="${String(pid).replace(/"/g, '&quot;')}" role="link" tabindex="0" title="Open in database">[${n}]</span>`
+          })
+        }).join('')
+      }
+
       const discussionHtml = computed(() => {
         const raw = discussion.value || ''
         if (!raw.trim()) return ''
+        const ids = usedPaperIds.value || []
         try {
           if (typeof marked !== 'undefined' && typeof marked.parse === 'function') {
-            return marked.parse(raw)
+            const inner = marked.parse(raw)
+            return linkifyDiscussionCitations(inner, ids)
           }
         } catch (e) {
           console.warn('Discussion markdown render failed', e)
         }
-        return String(raw)
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
+        return linkifyDiscussionCitations(
+          String(raw)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;'),
+          ids
+        )
       })
+
+      function onDiscussionCitationClick(e) {
+        const el = e.target && e.target.closest && e.target.closest('.discussion-cite[data-paper-id]')
+        if (!el) return
+        const id = el.getAttribute('data-paper-id')
+        if (id) navigateToSource(id)
+      }
+
+      function onDiscussionCitationKeydown(e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return
+        const el = e.target && e.target.closest && e.target.closest('.discussion-cite[data-paper-id]')
+        if (!el) return
+        e.preventDefault()
+        const id = el.getAttribute('data-paper-id')
+        if (id) navigateToSource(id)
+      }
 
       const filteredPapers = computed(() => {
         if (!searchQuery.value) return papers.value;
@@ -409,6 +448,9 @@ document.addEventListener('DOMContentLoaded', function() {
           }
           
           const data = await response.json()
+          if (Array.isArray(data.paper_ids) && data.paper_ids.length) {
+            usedPaperIds.value = data.paper_ids
+          }
           discussion.value = data.discussion || 'No discussion generated'
         } catch (error) {
           discussion.value = `Error: ${error.message || 'Failed to generate discussion'}`
@@ -442,6 +484,9 @@ document.addEventListener('DOMContentLoaded', function() {
           }
           
           const data = await response.json()
+          if (Array.isArray(data.paper_ids) && data.paper_ids.length) {
+            usedPaperIds.value = data.paper_ids
+          }
           discussion.value = `${originalDiscussion}\n\n### Follow-up question\n${followUpQuestion.value}\n\n### Answer\n${data.discussion}`
           followUpQuestion.value = ''
         } catch (error) {
@@ -543,6 +588,18 @@ document.addEventListener('DOMContentLoaded', function() {
         window.setTimeout(() => card?.classList.remove('paper-card--highlight'), 2600)
       }
       
+      function stemToMdDownloadName(filename) {
+        let s = String(filename || 'paper').trim()
+        s = s.replace(/[/\\]/g, '_')
+        if (/\.pdf$/i.test(s)) s = s.slice(0, -4)
+        else {
+          const dot = s.lastIndexOf('.')
+          if (dot > 0) s = s.slice(0, dot)
+        }
+        s = s.replace(/[<>:"|?*]+/g, '_').trim() || 'paper'
+        return `${s}.md`
+      }
+
       async function downloadMarkdown(paperId, filename) {
         try {
           const response = await fetchWithSession(`/download/${paperId}`);
@@ -556,15 +613,24 @@ document.addEventListener('DOMContentLoaded', function() {
           const url = window.URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
-          
-          const contentDisposition = response.headers.get('content-disposition');
-          let mdFilename = filename;
-          if (contentDisposition) {
-            const matches = contentDisposition.match(/filename="?(.+)"?/);
-            if (matches) mdFilename = matches[1];
+
+          let mdFilename = stemToMdDownloadName(filename)
+          const cd = response.headers.get('content-disposition')
+          if (cd) {
+            const mStar = cd.match(/filename\*=UTF-8''([^;\n]+)/i)
+            if (mStar) {
+              try {
+                mdFilename = decodeURIComponent(mStar[1].trim().replace(/^"+|"+$/g, ''))
+              } catch (_) { /* keep stem */ }
+            } else {
+              const m = cd.match(/filename="([^"]+)"/i) || cd.match(/filename=([^;\s]+)/i)
+              if (m && m[1] && !/^full\.md$/i.test(m[1].trim())) {
+                mdFilename = m[1].trim().replace(/^"+|"+$/g, '')
+              }
+            }
           }
-          if (!mdFilename.endsWith('.md')) {
-            mdFilename = `${mdFilename.split('.')[0]}.md`;
+          if (!mdFilename.toLowerCase().endsWith('.md')) {
+            mdFilename = stemToMdDownloadName(mdFilename)
           }
           
           a.download = mdFilename;
@@ -633,6 +699,8 @@ document.addEventListener('DOMContentLoaded', function() {
         togglePaperDetails,
         navigateToSource,
         downloadMarkdown,
+        onDiscussionCitationClick,
+        onDiscussionCitationKeydown,
         formatPoint,
         promptForApiKey,
         endSession,
