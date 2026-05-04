@@ -4,6 +4,8 @@
   <base href="/app/">  <!-- Add this in <head> -->
   <!-- If this page is served from a static host while the API lives elsewhere, set your FastAPI origin (no trailing slash), e.g. https://your-service.onrender.com -->
   <meta name="api-base-url" content="">
+  <!-- Long PDF uploads: POST /upload directly to Render (same URL as api-base-url usually) so Vercel's edge proxy does not time out. Requires CORS + X-RA-Session-Id on the backend. -->
+  <meta name="direct-api-base-url" content="">
   <!-- Rare: reverse proxy mounts API under a prefix; e.g. content="/api/v1" → requests go to origin + prefix + path -->
   <meta name="api-path-prefix" content="">
   <meta charset="UTF-8">

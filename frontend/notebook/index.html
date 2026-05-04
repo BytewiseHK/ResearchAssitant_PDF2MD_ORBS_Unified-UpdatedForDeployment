@@ -3,6 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Optional: when API is not same-origin; usually leave empty when FastAPI serves this page -->
+    <meta name="api-base-url" content="">
+    <!-- Long uploads /analysis: POST directly to Render so Vercel edge proxy does not time out (set to same host as backend, no trailing slash). -->
+    <meta name="direct-api-base-url" content="">
+    <meta name="api-path-prefix" content="">
     <title>Bytewise ORBS Grader</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">

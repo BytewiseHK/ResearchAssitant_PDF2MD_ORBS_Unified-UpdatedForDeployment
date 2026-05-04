@@ -4,6 +4,68 @@
     { "src": "frontend/**/index.html", "use": "@vercel/static" },
     { "src": "frontend/index.html", "use": "@vercel/static" }
   ],
+  "rewrites": [
+    {
+      "source": "/session/:path*",
+      "destination": "https://researchassitant-pdf2md-orbs-unified.onrender.com/session/:path*"
+    },
+    {
+      "source": "/chatbot-answer",
+      "destination": "https://researchassitant-pdf2md-orbs-unified.onrender.com/chatbot-answer"
+    },
+    {
+      "source": "/clear-chat-history",
+      "destination": "https://researchassitant-pdf2md-orbs-unified.onrender.com/clear-chat-history"
+    },
+    {
+      "source": "/files-upload",
+      "destination": "https://researchassitant-pdf2md-orbs-unified.onrender.com/files-upload"
+    },
+    {
+      "source": "/analyze",
+      "destination": "https://researchassitant-pdf2md-orbs-unified.onrender.com/analyze"
+    },
+    {
+      "source": "/upload",
+      "destination": "https://researchassitant-pdf2md-orbs-unified.onrender.com/upload"
+    },
+    {
+      "source": "/generate",
+      "destination": "https://researchassitant-pdf2md-orbs-unified.onrender.com/generate"
+    },
+    {
+      "source": "/research/candidates/",
+      "destination": "https://researchassitant-pdf2md-orbs-unified.onrender.com/research/candidates"
+    },
+    {
+      "source": "/research/candidates",
+      "destination": "https://researchassitant-pdf2md-orbs-unified.onrender.com/research/candidates"
+    },
+    {
+      "source": "/write/candidates/",
+      "destination": "https://researchassitant-pdf2md-orbs-unified.onrender.com/write/candidates"
+    },
+    {
+      "source": "/write/candidates",
+      "destination": "https://researchassitant-pdf2md-orbs-unified.onrender.com/write/candidates"
+    },
+    {
+      "source": "/discuss",
+      "destination": "https://researchassitant-pdf2md-orbs-unified.onrender.com/discuss"
+    },
+    {
+      "source": "/database",
+      "destination": "https://researchassitant-pdf2md-orbs-unified.onrender.com/database"
+    },
+    {
+      "source": "/database/:path*",
+      "destination": "https://researchassitant-pdf2md-orbs-unified.onrender.com/database/:path*"
+    },
+    {
+      "source": "/download/:path*",
+      "destination": "https://researchassitant-pdf2md-orbs-unified.onrender.com/download/:path*"
+    }
+  ],
   "routes": [
     { "src": "^/session/(.*)$", "dest": "https://researchassitant-pdf2md-orbs-unified.onrender.com/session/$1" },
     { "src": "^/chatbot-answer$", "dest": "https://researchassitant-pdf2md-orbs-unified.onrender.com/chatbot-answer" },
@@ -12,8 +74,8 @@
     { "src": "^/analyze$", "dest": "https://researchassitant-pdf2md-orbs-unified.onrender.com/analyze" },
     { "src": "^/upload$", "dest": "https://researchassitant-pdf2md-orbs-unified.onrender.com/upload" },
     { "src": "^/generate$", "dest": "https://researchassitant-pdf2md-orbs-unified.onrender.com/generate" },
-    { "src": "^/research/candidates$", "dest": "https://researchassitant-pdf2md-orbs-unified.onrender.com/research/candidates" },
-    { "src": "^/write/candidates$", "dest": "https://researchassitant-pdf2md-orbs-unified.onrender.com/write/candidates" },
+    { "src": "^/research/candidates/?$", "dest": "https://researchassitant-pdf2md-orbs-unified.onrender.com/research/candidates" },
+    { "src": "^/write/candidates/?$", "dest": "https://researchassitant-pdf2md-orbs-unified.onrender.com/write/candidates" },
     { "src": "^/discuss$", "dest": "https://researchassitant-pdf2md-orbs-unified.onrender.com/discuss" },
     { "src": "^/database/(.*)$", "dest": "https://researchassitant-pdf2md-orbs-unified.onrender.com/database/$1" },
     { "src": "^/database$", "dest": "https://researchassitant-pdf2md-orbs-unified.onrender.com/database" },
@@ -29,4 +91,3 @@
     { "src": "^/$", "dest": "/frontend/index.html" }
   ]
 }
-

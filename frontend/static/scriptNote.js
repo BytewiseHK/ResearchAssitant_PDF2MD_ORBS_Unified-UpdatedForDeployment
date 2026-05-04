@@ -57,13 +57,88 @@ document.addEventListener('DOMContentLoaded', () => {
     // Array to store selected files
     let selectedFiles = [];
 
+    /** Browser session id (mirrors cookie); sent as X-RA-Session-Id for direct Render uploads from Vercel. */
+    let sessionId = '';
+
+    function getApiBase() {
+        try {
+            const m = document.querySelector('meta[name="api-base-url"]');
+            const raw = m != null && m.getAttribute('content') != null ? String(m.getAttribute('content')).trim() : '';
+            return raw.replace(/\/$/, '');
+        } catch (_) {
+            return '';
+        }
+    }
+
+    function getApiPathPrefix() {
+        try {
+            const m = document.querySelector('meta[name="api-path-prefix"]');
+            const raw = m != null && m.getAttribute('content') != null ? String(m.getAttribute('content')).trim() : '';
+            if (!raw) return '';
+            const p = raw.startsWith('/') ? raw : '/' + raw;
+            return p.replace(/\/$/, '');
+        } catch (_) {
+            return '';
+        }
+    }
+
+    function resolveApiUrl(urlPath) {
+        const path = urlPath.startsWith('/') ? urlPath : '/' + urlPath;
+        const configured = getApiBase();
+        if (configured) {
+            return `${configured}${path}`;
+        }
+        const prefix = getApiPathPrefix();
+        if (typeof window !== 'undefined' && window.location && window.location.origin) {
+            return `${window.location.origin}${prefix}${path}`;
+        }
+        return path;
+    }
+
+    function getDirectApiBase() {
+        try {
+            const m = document.querySelector('meta[name="direct-api-base-url"]');
+            const raw = m != null && m.getAttribute('content') != null ? String(m.getAttribute('content')).trim() : '';
+            if (raw) return raw.replace(/\/$/, '');
+        } catch (_) {
+            /* ignore */
+        }
+        try {
+            const h = typeof window !== 'undefined' && window.location ? window.location.hostname : '';
+            if (h.endsWith('vercel.app')) {
+                return 'https://researchassitant-pdf2md-orbs-unified.onrender.com';
+            }
+        } catch (_) {
+            /* ignore */
+        }
+        return '';
+    }
+
+    function resolveDirectLongUrl(urlPath) {
+        const d = getDirectApiBase();
+        const path = urlPath.startsWith('/') ? urlPath : '/' + urlPath;
+        if (!d) return resolveApiUrl(urlPath);
+        return `${d}${path}`;
+    }
+
+    async function fetchLongOperation(urlPath, options = {}) {
+        const direct = getDirectApiBase();
+        const url = resolveDirectLongUrl(urlPath);
+        const headers = { ...(options.headers || {}) };
+        if (direct && sessionId) {
+            headers['X-RA-Session-Id'] = sessionId;
+        }
+        const credentials = direct ? 'omit' : 'include';
+        return fetch(url, { ...options, headers, credentials });
+    }
+
     // For checking if chatbot gave answer already
     // If yes, then enable sending new message
     // If not, user has to wait the answer before sending another message
     let chatbotAnswered = true;
 
-    async function fetchWithSession(url, options = {}) {
-        return fetch(url, { credentials: 'include', ...options });
+    async function fetchWithSession(urlPath, options = {}) {
+        return fetch(resolveApiUrl(urlPath), { credentials: 'include', ...options });
     }
 
     async function sessionHasKey() {
@@ -71,6 +146,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const res = await fetchWithSession('/session/status', { headers: { 'Accept': 'application/json' } });
             if (!res.ok) return false;
             const data = await res.json();
+            if (data.session_id) sessionId = String(data.session_id);
             return !!data.has_api_key;
         } catch (_) {
             return false;
@@ -140,6 +216,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             return;
         }
+        try {
+            const data = await res.json();
+            if (data.session_id) sessionId = String(data.session_id);
+        } catch (_) { /* ok */ }
         closeKeyModal();
     }
 
@@ -258,7 +338,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 resetSendStateAfterAbort();
                 return;
             }
-            const response = await fetchWithSession('/analyze', {
+            const response = await fetchLongOperation('/analyze', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -516,7 +596,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 );
                 return;
             }
-            addMessage('Sorry, there was an error uploading your files. Please try again.', 'assistant');
+            let tip = '';
+            try {
+                const host = typeof window !== 'undefined' && window.location ? window.location.hostname : '';
+                if (host.endsWith('vercel.app') && !getDirectApiBase()) {
+                    tip = ' For large files on Vercel, set meta direct-api-base-url to your Render API (see docs/vercel-proxy-verify.md).';
+                }
+            } catch (_) {}
+            addMessage('Sorry, there was an error uploading your files. Please try again.' + tip, 'assistant');
         }
 
         closeUploadModal();
@@ -532,7 +619,7 @@ document.addEventListener('DOMContentLoaded', () => {
             formData.append('files', file);
         });
 
-        const response = await fetchWithSession('/files-upload', {
+        const response = await fetchLongOperation('/files-upload', {
             method: 'POST',
             body: formData
         });

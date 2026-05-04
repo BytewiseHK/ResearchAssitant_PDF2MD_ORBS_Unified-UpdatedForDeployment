@@ -62,6 +62,7 @@ document.addEventListener('DOMContentLoaded', function() {
       const papers = ref([])
       const searchQuery = ref('')
       const hasApiKey = ref(false)
+      const sessionId = ref('')
       const showKeyModal = ref(false)
       const apiKeyInput = ref('')
       const keyModalError = ref('')
@@ -99,6 +100,26 @@ document.addEventListener('DOMContentLoaded', function() {
         }
       }
 
+      /** When set (e.g. Render origin), long-running POST /upload bypasses Vercel and hits this host directly. */
+      function getDirectApiBase() {
+        try {
+          const m = document.querySelector('meta[name="direct-api-base-url"]')
+          const raw = m != null && m.getAttribute('content') != null ? String(m.getAttribute('content')).trim() : ''
+          if (raw) return raw.replace(/\/$/, '')
+        } catch (_) {
+          /* ignore */
+        }
+        try {
+          const h = typeof window !== 'undefined' && window.location ? window.location.hostname : ''
+          if (h.endsWith('vercel.app')) {
+            return 'https://researchassitant-pdf2md-orbs-unified.onrender.com'
+          }
+        } catch (_) {
+          /* ignore */
+        }
+        return ''
+      }
+
       /**
        * Absolute URL for API calls so the document base tag cannot send requests to the wrong path.
        */
@@ -119,12 +140,26 @@ document.addEventListener('DOMContentLoaded', function() {
         return fetch(resolveApiUrl(urlPath), { credentials: 'include', ...options })
       }
 
+      /** POST /upload (and similar) without Vercel edge timeouts: same backend via direct-api-base-url + session header. */
+      async function fetchUploadWithSession(urlPath, options = {}) {
+        const direct = getDirectApiBase()
+        const path = urlPath.startsWith('/') ? urlPath : '/' + urlPath
+        const url = direct ? `${direct}${path}` : resolveApiUrl(urlPath)
+        const baseHeaders = { ...(options.headers || {}) }
+        if (direct && sessionId.value) {
+          baseHeaders['X-RA-Session-Id'] = sessionId.value
+        }
+        const credentials = direct ? 'omit' : 'include'
+        return fetch(url, { ...options, headers: baseHeaders, credentials })
+      }
+
       async function refreshSessionStatus() {
         try {
           const res = await fetchWithSession('/session/status', { headers: { 'Accept': 'application/json' } })
           if (!res.ok) return
           const data = await res.json()
           hasApiKey.value = !!data.has_api_key
+          if (data.session_id) sessionId.value = String(data.session_id)
         } catch (_) {
           // ignore
         }
@@ -154,7 +189,13 @@ document.addEventListener('DOMContentLoaded', function() {
           keyModalError.value = await res.text().catch(() => 'Failed to set key')
           return
         }
-        hasApiKey.value = true
+        try {
+          const data = await res.json()
+          hasApiKey.value = !!data.has_api_key
+          if (data.session_id) sessionId.value = String(data.session_id)
+        } catch (_) {
+          hasApiKey.value = true
+        }
         closeKeyModal()
       }
 
@@ -413,7 +454,7 @@ document.addEventListener('DOMContentLoaded', function() {
           const formData = new FormData()
           formData.append('file', file.value)
           
-          const response = await fetchWithSession('/upload', {
+          const response = await fetchUploadWithSession('/upload', {
               method: 'POST',
               body: formData
           })
@@ -437,7 +478,15 @@ document.addEventListener('DOMContentLoaded', function() {
               }
           }))
         } catch (error) {
-          statusMessage.value = `Error: ${error.message || 'Unknown error occurred'}`
+          let tip = ''
+          try {
+            const host = typeof window !== 'undefined' && window.location ? window.location.hostname : ''
+            if (host.endsWith('vercel.app') && !getDirectApiBase()) {
+              tip =
+                ' Tip: large PDFs often hit Vercel proxy timeouts—set meta direct-api-base-url to your Render API URL (see docs/vercel-proxy-verify.md).'
+            }
+          } catch (_) {}
+          statusMessage.value = `Error: ${error.message || 'Unknown error occurred'}${tip}`
         } finally {
           progress.value = 100
           setTimeout(() => {

@@ -594,10 +594,16 @@ class _SessionMiddleware(BaseHTTPMiddleware):
         _purge_expired_sessions()
 
         cookie_name = settings.session_cookie_name
-        sid = request.cookies.get(cookie_name)
+        # Same session when UI is on Vercel (cookie) vs direct POST to Render (no cookie): trust X-RA-Session-Id.
+        hdr = (request.headers.get("x-ra-session-id") or "").strip()
+        ck = (request.cookies.get(cookie_name) or "").strip()
         new_sid = False
 
-        if not sid or not re.fullmatch(r"[a-f0-9]{32}", sid):
+        if hdr and re.fullmatch(r"[a-f0-9]{32}", hdr):
+            sid = hdr
+        elif ck and re.fullmatch(r"[a-f0-9]{32}", ck):
+            sid = ck
+        else:
             sid = secrets.token_hex(16)
             new_sid = True
 
@@ -627,7 +633,8 @@ if cors_origins_env:
 else:
     # Local dev default (same-origin and common localhost variants)
     cors_origins = [
-        "https://ra-pdf2md-orbs-unified-deploy.vercel.app",   # <-- removed trailing slash
+        "https://ra-pdf2md-orbs-unified-deploy.vercel.app",
+        "https://bytewise-resgrade.vercel.app",
         "http://localhost:8000",
         "http://127.0.0.1:8000",
     ]
