@@ -48,6 +48,29 @@
       margin-bottom: 30px;
       font-size: 1.1rem;
     }
+    .landing-nav-home {
+      text-align: center;
+      margin: -12px 0 20px 0;
+    }
+    .landing-home-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: #9a9a9a;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 15px;
+      padding: 10px 18px;
+      border: 1px solid #333;
+      border-radius: 10px;
+      background: #181818;
+      transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+    }
+    .landing-home-link:hover {
+      color: #e0e0e0;
+      border-color: #444;
+      background: #252525;
+    }
     .mode-toggle {
       display: flex;
       margin-bottom: 25px;

@@ -92,6 +92,12 @@ body.orbs-app {
   border-color: #444;
 }
 
+a.orbs-icon-btn,
+a.orbs-home-link {
+  text-decoration: none;
+  box-sizing: border-box;
+}
+
 .orbs-main {
   flex: 1;
   display: flex;
