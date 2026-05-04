@@ -3,179 +3,139 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bytewise Chat</title>
-    <script src="https://cdn.tailwindcss.com"></script> 
+    <title>Bytewise ORBS Grader</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="/app/static/styleNote.css">
 </head>
-<body class="flex flex-col h-screen">
-    <!-- Header -->
-    <header class="bg-white border-b border-gray-200 py-3 px-4 flex justify-between items-center">
-        <div class="text-xl font-semibold text-gray-800">
-            <span class="flex items-center">
-                <svg class="w-6 h-6 mr-2" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
-                    <path d="M2 17L12 22L22 17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
-                    <path d="M2 12L12 17L22 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
-                </svg>
-                Bytewise
-            </span>
+<body class="orbs-app">
+    <header class="orbs-header">
+        <div class="orbs-header-brand">
+            <i class="fas fa-graduation-cap orbs-header-icon"></i>
+            <div>
+                <div class="orbs-header-title">Bytewise ORBS Grader</div>
+                <div class="orbs-header-sub">Notebook analysis · OpenRouter session key</div>
+            </div>
         </div>
-        <div class="flex items-center space-x-4">
-            <button class="text-gray-600 hover:text-gray-800 transition-colors" title="Set OpenRouter Key (Session)" id="set-key-btn">
+        <div class="orbs-header-actions">
+            <button type="button" class="orbs-icon-btn" title="Set OpenRouter key (session)" id="set-key-btn" aria-label="Set API key">
                 <i class="fas fa-key"></i>
             </button>
-            <button class="text-gray-600 hover:text-gray-800 transition-colors" title="End Session" id="end-session-btn">
+            <button type="button" class="orbs-icon-btn" title="End session" id="end-session-btn" aria-label="End session">
                 <i class="fas fa-door-open"></i>
             </button>
-            <button class="text-gray-600 hover:text-gray-800 transition-colors" title="Share Site" id="share-btn">
+            <button type="button" class="orbs-icon-btn" title="Share link" id="share-btn" aria-label="Share">
                 <i class="fas fa-share-alt"></i>
             </button>
-            <button class="text-gray-600 hover:text-gray-800 transition-colors" title="Refresh Page" id="refresh-btn">
+            <button type="button" class="orbs-icon-btn" title="Refresh / clear chat" id="refresh-btn" aria-label="Refresh">
                 <i class="fas fa-sync-alt"></i>
             </button>
         </div>
     </header>
 
-    <!-- Main Chat Area -->
-    <main class="flex-1 overflow-hidden flex flex-col bg-gray-50">
-        <!-- Chat Messages -->
-        <div class="chat-container flex-1 overflow-y-auto px-4 py-6" id="chat-messages">
-            <!-- Bot welcome message -->
-            <div class="flex mb-4">
-                <div class="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center mr-2 flex-shrink-0">
-                    <i class="fas fa-robot text-blue-500 text-sm"></i>
+    <main class="orbs-main">
+        <div class="orbs-chat orbs-chat-scroll" id="chat-messages">
+            <div class="orbs-msg-row">
+                <div class="orbs-avatar orbs-avatar--bot">
+                    <i class="fas fa-robot"></i>
                 </div>
-                <div class="message assistant-message p-3 shadow-sm">
+                <div class="orbs-bubble orbs-bubble--bot">
                     <p>
-                        Hello! I'm your Bytewise assistant, 
-                        tasked with assisting on grading Jupyter Notebook (.ipynb) files. 
-                        Upload the first batch of notebooks and I will analyze them one-by-one. 
-                        <br>
-                        Note that uploading files may take a while, do not close the file uploading window.
-                        <br>
-                        Once you have uploaded the files. Use the following commands:
-                        <br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'/start' to start analysis on the first notebook
-                        <br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'/next' to move to the next notebook
+                        Hello! I'm your Bytewise assistant for grading Jupyter Notebook (<code>.ipynb</code>) files.
+                        Upload a batch of notebooks and I will analyze them one-by-one.
+                        <br><br>
+                        <strong>Important:</strong> set your <strong>OpenRouter API key</strong> with the key icon above (same session system as Research Assistant). LLM calls require it.
+                        <br><br>
+                        After upload, use:
+                        <br><code>/start</code> or <code>start</code> — analyze the first notebook
+                        <br><code>/next</code> or <code>next</code> — move to the next notebook
                     </p>
                 </div>
             </div>
-            <!-- JS will dynamically add new messages as the convo progresses -->
         </div>
 
-        <!-- File Upload Modal (Hidden by default) -->
-        <div id="upload-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden modal-overlay">
-            <div class="bg-white rounded-lg p-6 w-full max-w-md modal-content">
-                <div class="flex justify-between items-center mb-4">
-                    <h3 class="text-lg font-medium">Upload File</h3>
-                    <button id="close-upload" class="text-gray-500 hover:text-gray-700">
+        <div id="upload-modal" class="orbs-modal-overlay hidden modal-overlay" aria-hidden="true">
+            <div class="orbs-modal modal-content">
+                <div class="orbs-modal-head">
+                    <h3>Upload notebooks</h3>
+                    <button type="button" class="orbs-icon-btn" id="close-upload" aria-label="Close">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
-                <div id="drop-area" class="upload-area rounded-lg p-8 flex flex-col items-center justify-center cursor-pointer">
-                    <i class="fas fa-cloud-upload-alt text-4xl text-gray-400 mb-3"></i>
-                    <p class="text-gray-600 text-center mb-2">Drag and drop files here</p>
-                    <p class="text-gray-400 text-sm text-center">or</p>
-                    <label class="mt-3 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-md cursor-pointer">
-                        <span class="text-gray-700">Browse files</span>
-                        <input type="file" class="hidden" id="file-input" multiple>
+                <div id="drop-area" class="orbs-drop-area upload-area">
+                    <i class="fas fa-cloud-upload-alt orbs-drop-icon"></i>
+                    <p class="orbs-drop-text">Drag &amp; drop <code>.ipynb</code> files here</p>
+                    <p class="orbs-drop-hint">or</p>
+                    <label class="orbs-browse-btn">
+                        <span>Browse files</span>
+                        <input type="file" class="hidden" id="file-input" multiple accept=".ipynb,application/x-ipynb+json">
                     </label>
-                    <p class="text-xs text-gray-500 mt-2">You can select multiple files</p>
+                    <p class="orbs-drop-note">Keep the upload window open until uploads finish.</p>
                 </div>
-                <div id="file-preview" class="file-preview">
-                    <div class="space-y-2 max-h-32 overflow-y-auto">
-                        <!-- Multiple files will be displayed here -->
-                        <div id="files-list">
-                            <!-- Individual file items will be added dynamically -->
-
-                        </div>
+                <div id="file-preview" class="file-preview orbs-file-preview">
+                    <div class="orbs-file-list-wrap">
+                        <div id="files-list"></div>
                     </div>
-                    <div class="mt-2 text-xs text-gray-500" id="file-count" style="display: none;">
+                    <div class="orbs-file-count" id="file-count" style="display: none;">
                         <span id="selected-count">0</span> file(s) selected
                     </div>
                 </div>
-                <div class="mt-4 flex justify-end">
-                    <button id="cancel-upload" class="px-4 py-2 text-gray-600 hover:text-gray-800">Cancel</button>
-                    <button id="confirm-upload" class="ml-2 px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed" disabled="">Upload</button>
+                <div class="orbs-modal-actions">
+                    <button type="button" class="orbs-btn orbs-btn--ghost" id="cancel-upload">Cancel</button>
+                    <button type="button" class="orbs-btn orbs-btn--primary is-disabled" id="confirm-upload" disabled>Upload</button>
                 </div>
             </div>
         </div>
 
-        <!-- Share Modal (Hidden by default) -->
-        <div id="share-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden modal-overlay">
-            <div class="bg-white rounded-lg p-6 w-full max-w-md modal-content">
-                <div class="flex justify-between items-center mb-4">
-                    <h3 class="text-lg font-medium">Share Bytewise</h3>
-                    <button id="close-share" class="text-gray-500 hover:text-gray-700">
+        <div id="share-modal" class="orbs-modal-overlay hidden modal-overlay" aria-hidden="true">
+            <div class="orbs-modal modal-content">
+                <div class="orbs-modal-head">
+                    <h3>Share</h3>
+                    <button type="button" class="orbs-icon-btn" id="close-share" aria-label="Close">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
-                <div class="mb-4">
-                    <p class="text-gray-600 mb-3">Share this conversation with others:</p>
-                    <div class="flex items-center bg-gray-50 border border-gray-200 rounded-md p-2">
-                        <input type="text" value="r" class="flex-1 bg-transparent border-none focus:outline-none text-sm" readonly="" id="share-link">
-                        <button id="copy-link" class="ml-2 text-blue-500 hover:text-blue-700">
-                            <i class="fas fa-copy"></i>
-                        </button>
-                    </div>
+                <p class="orbs-modal-text">Copy this page URL:</p>
+                <div class="orbs-share-row">
+                    <input type="text" readonly id="share-link" class="orbs-share-input" value="">
+                    <button type="button" class="orbs-btn orbs-btn--primary" id="copy-link" aria-label="Copy link">
+                        <i class="fas fa-copy"></i>
+                    </button>
                 </div>
-                <!-- Social Media Share Buttons (Probably not needed in the demo) -->
-                <!-- <div class="flex justify-center space-x-4">
-                    <button class="p-2 bg-blue-500 text-white rounded-full hover:bg-blue-600">
-                        <i class="fab fa-twitter"></i>
-                    </button>
-                    <button class="p-2 bg-blue-800 text-white rounded-full hover:bg-blue-900">
-                        <i class="fab fa-facebook-f"></i>
-                    </button>
-                    <button class="p-2 bg-green-600 text-white rounded-full hover:bg-green-700">
-                        <i class="fab fa-whatsapp"></i>
-                    </button>
-                    <button class="p-2 bg-blue-700 text-white rounded-full hover:bg-blue-800">
-                        <i class="fab fa-linkedin-in"></i>
-                    </button>
-                </div> -->
             </div>
         </div>
 
-        <!-- API Key Modal (Hidden by default) -->
-        <div id="key-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden modal-overlay">
-            <div class="bg-white rounded-lg p-6 w-full max-w-md modal-content">
-                <div class="flex justify-between items-center mb-2">
-                    <h3 class="text-lg font-medium"><i class="fas fa-key mr-2"></i>OpenRouter API Key</h3>
-                    <button id="close-key" class="text-gray-500 hover:text-gray-700">
+        <div id="key-modal" class="orbs-modal-overlay hidden modal-overlay" aria-hidden="true">
+            <div class="orbs-modal orbs-modal--key modal-content">
+                <div class="orbs-modal-head">
+                    <h3><i class="fas fa-key"></i> OpenRouter API key</h3>
+                    <button type="button" class="orbs-icon-btn" id="close-key" aria-label="Close">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
-                <p class="text-sm text-gray-600 mb-3">
-                    This key is kept only in server memory for this browser session and is deleted when you end the session (or after inactivity).
+                <p class="orbs-modal-text">
+                    Stored only in server memory for this browser session. Cleared when you end the session or after inactivity — same behavior as Research Assistant.
                 </p>
-                <input id="api-key-input" type="password" placeholder="sk-or-..." autocomplete="off"
-                       class="w-full bg-gray-50 border border-gray-200 rounded-md p-2 text-sm focus:outline-none mb-3" />
-                <div class="flex justify-end space-x-2">
-                    <button id="save-key" class="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed">
-                        Save for Session
-                    </button>
-                    <button id="end-session-2" class="px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200">
-                        End Session
-                    </button>
+                <input id="api-key-input" type="password" placeholder="sk-or-..." autocomplete="off" spellcheck="false" class="orbs-input" />
+                <div class="orbs-modal-actions">
+                    <button type="button" class="orbs-btn orbs-btn--ghost" id="end-session-2">End session</button>
+                    <button type="button" class="orbs-btn orbs-btn--primary" id="save-key">Save for session</button>
                 </div>
-                <div id="key-error" class="mt-3 text-sm text-red-600 hidden"></div>
+                <div id="key-error" class="orbs-key-error hidden" role="alert"></div>
             </div>
         </div>
 
-        <!-- Message Input Area -->
-        <div class="bg-white border-t border-gray-200 p-4">
-            <div class="flex items-end bg-gray-50 rounded-lg border border-gray-200">
-                <button id="attach-btn" class="p-3 text-gray-500 hover:text-gray-700 transition-colors">
+        <footer class="orbs-input-bar">
+            <div class="orbs-input-inner">
+                <button type="button" class="orbs-attach-btn" id="attach-btn" title="Attach notebooks" aria-label="Attach">
                     <i class="fas fa-paperclip"></i>
                 </button>
-                <textarea id="message-input" placeholder="Type a message... (Shift+Enter for new line)" class="flex-1 py-3 px-2 bg-transparent focus:outline-none resize-none max-h-32 min-h-[48px]" rows="1"></textarea>
-                <button id="send-btn" class="p-3 text-gray-500 hover:text-blue-500 disabled:opacity-50 transition-colors" disabled="">
+                <textarea id="message-input" placeholder="Message… (Shift+Enter for new line). /start and /next for grading flow." rows="1"></textarea>
+                <button type="button" class="orbs-send-btn" id="send-btn" disabled title="Send" aria-label="Send">
                     <i class="fas fa-paper-plane"></i>
                 </button>
             </div>
-        </div>
+        </footer>
     </main>
 
     <script src="/app/static/scriptNote.js"></script>

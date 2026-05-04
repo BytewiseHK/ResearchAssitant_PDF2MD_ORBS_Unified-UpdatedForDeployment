@@ -111,7 +111,15 @@
         <h3><i class="fas fa-list-ul"></i> Generated Points:</h3>
         <div v-for="(point, index) in paperPoints" :key="index" class="point-item">
           {{ point.formatted_text }}
-          <span v-if="point.raw_data.source" class="citation" @click="navigateToSource(point.raw_data.sourceId)">
+          <span
+            v-if="point.raw_data.source && point.raw_data.sourceId"
+            class="citation"
+            role="button"
+            tabindex="0"
+            :title="'Open in database: ' + point.raw_data.sourceId"
+            @click="navigateToSource(point.raw_data.sourceId)"
+            @keydown.enter.prevent="navigateToSource(point.raw_data.sourceId)"
+          >
             [Source: {{ point.raw_data.source }}]
           </span>
         </div>
@@ -141,7 +149,27 @@
         <h3><i class="fas fa-star"></i> Generated Points:</h3>
         <div v-for="(point, index) in generatedPoints" :key="index" class="point-item">
           {{ point.text }}
-          <span v-if="point.source" class="citation" @click="navigateToSource(point.sourceId)">
+          <template v-if="point.sourceIds && point.sourceIds.length > 1">
+            <span
+              v-for="(sid, ix) in point.sourceIds"
+              :key="String(sid) + '-' + ix"
+              class="citation"
+              role="button"
+              tabindex="0"
+              :title="'Open in database: ' + sid"
+              @click="navigateToSource(sid)"
+              @keydown.enter.prevent="navigateToSource(sid)"
+            >[{{ ((point.source || '').split(',')[ix] || '').trim() || 'source' }}]</span>
+          </template>
+          <span
+            v-else-if="point.source && point.sourceId"
+            class="citation"
+            role="button"
+            tabindex="0"
+            :title="'Open in database: ' + point.sourceId"
+            @click="navigateToSource(point.sourceId)"
+            @keydown.enter.prevent="navigateToSource(point.sourceId)"
+          >
             [Source: {{ point.source }}]
           </span>
         </div>
@@ -193,7 +221,7 @@
       </div>
       
       <div v-if="papers.length">
-        <div class="paper-card" v-for="paper in filteredPapers" :key="paper.id" :ref="'paper-'+paper.id">
+        <div class="paper-card" v-for="paper in filteredPapers" :key="paper.id" :data-paper-id="paper.id">
           <div class="paper-header" 
                @click="togglePaperDetails(paper.id)"
                :class="{ expanded: paper.expanded }">

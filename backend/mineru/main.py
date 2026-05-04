@@ -931,7 +931,10 @@ async def view_database():
     try:
         conn = sqlite3.connect(settings.database_path)
         conn.row_factory = sqlite3.Row
-        papers = conn.execute("SELECT id, filename, content, points FROM papers").fetchall()
+        papers = conn.execute(
+            "SELECT id, filename, content, points, created_at FROM papers "
+            "ORDER BY datetime(created_at) DESC"
+        ).fetchall()
         conn.close()
         
         response = {

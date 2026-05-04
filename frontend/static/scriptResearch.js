@@ -7,7 +7,7 @@ document.addEventListener('DOMContentLoaded', function() {
     return;
   }
   
-  const { createApp, ref, computed, watch } = Vue;
+  const { createApp, ref, computed, watch, nextTick } = Vue;
   
   // Check if the app container exists
   const appContainer = document.getElementById('app');
@@ -41,7 +41,6 @@ document.addEventListener('DOMContentLoaded', function() {
       const databaseError = ref('')
       const papers = ref([])
       const searchQuery = ref('')
-      const paperToExpand = ref(null)
       const hasApiKey = ref(false)
       const showKeyModal = ref(false)
       const apiKeyInput = ref('')
@@ -262,11 +261,18 @@ document.addEventListener('DOMContentLoaded', function() {
           
           const data = await response.json()
           
-          generatedPoints.value = data.points.map(point => ({
-            text: point.formatted_text || point.text,
-            source: point.raw_data?.source || point.source,
-            sourceId: point.raw_data?.sourceId || point.sourceId
-          }))
+          generatedPoints.value = data.points.map(point => {
+            const raw = point.raw_data || {}
+            const ids = Array.isArray(raw.sourceIds) && raw.sourceIds.length
+              ? raw.sourceIds
+              : (raw.sourceId ? [raw.sourceId] : (point.sourceId ? [point.sourceId] : []))
+            return {
+              text: point.formatted_text || point.text,
+              source: raw.source || point.source,
+              sourceId: ids[0] || null,
+              sourceIds: ids
+            }
+          })
           
           // Store the paper IDs used for these points
           if (data.paper_ids) {
@@ -420,10 +426,28 @@ document.addEventListener('DOMContentLoaded', function() {
         }
       }
       
-      function navigateToSource(paperId) {
-        if (!paperId) return;
-        paperToExpand.value = paperId;
-        setMode('database');
+      async function navigateToSource(paperId) {
+        if (!paperId) return
+        searchQuery.value = ''
+        mode.value = 'database'
+        await loadDatabase()
+        await nextTick()
+        const paper = papers.value.find(p => p.id === paperId)
+        if (!paper) {
+          statusMessage.value = 'Could not find that paper in the database (it may have been removed).'
+          return
+        }
+        if (!paper.expanded) {
+          paper.expanded = true
+          await loadPaperDetails(paper)
+        } else if (!paper.fullContent) {
+          await loadPaperDetails(paper)
+        }
+        await nextTick()
+        const card = document.querySelector(`[data-paper-id="${paperId}"]`)
+        card?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        card?.classList.add('paper-card--highlight')
+        window.setTimeout(() => card?.classList.remove('paper-card--highlight'), 2600)
       }
       
       async function downloadMarkdown(paperId, filename) {

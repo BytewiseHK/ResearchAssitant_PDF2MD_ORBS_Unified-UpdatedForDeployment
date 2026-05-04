@@ -51,37 +51,45 @@
     .mode-toggle {
       display: flex;
       margin-bottom: 25px;
-      border-radius: 10px;
+      border-radius: 12px;
       overflow: hidden;
-      box-shadow: 0 4px 6px rgba(0,0,0,0.08);
+      background: #181818;
+      border: 1px solid #333;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
     }
     .mode-toggle button {
       flex: 1;
-      padding: 16px;
-      background: #252525;
+      padding: 16px 14px;
+      background: transparent;
       border: none;
       cursor: pointer;
       font-weight: 600;
-      font-size: 17px;
-      transition: all 0.3s ease;
+      font-size: 16px;
+      transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 10px;
-      color: #e0e0e0;
-    }
-    .mode-toggle button:hover {
-      background: #333;
-    }
-    .mode-toggle button.active {
-      background: #666;
-      color: white;
-    }
-    .mode-toggle button:first-child {
-      border-radius: 10px 0 0 10px;
+      color: #9a9a9a;
+      border-right: 1px solid #2a2a2a;
     }
     .mode-toggle button:last-child {
-      border-radius: 0 10px 10px 0;
+      border-right: none;
+    }
+    .mode-toggle button:hover {
+      background: #252525;
+      color: #e0e0e0;
+    }
+    .mode-toggle button.active {
+      background: linear-gradient(180deg, #3d3d3d 0%, #2a2a2a 100%);
+      color: #f5f5f5;
+      box-shadow: inset 0 -3px 0 #888888;
+    }
+    .mode-toggle button:first-child {
+      border-radius: 0;
+    }
+    .mode-toggle button:last-child {
+      border-radius: 0;
     }
     .upload-area {
       border: 3px dashed #666;
@@ -447,19 +455,25 @@
       transform: rotate(180deg);
     }
     .citation {
-      font-size: 0.8em;
-      color: #2ecc71;
-      background: #333;
-      padding: 2px 6px;
-      border-radius: 4px;
+      font-size: 0.85em;
+      color: #5ee0a0;
+      background: rgba(46, 204, 113, 0.12);
+      padding: 4px 10px;
+      border-radius: 6px;
       margin-left: 8px;
       cursor: pointer;
-      text-decoration: underline;
-      transition: all 0.2s;
+      text-decoration: none;
+      border: 1px solid rgba(94, 224, 160, 0.35);
+      transition: background 0.2s, color 0.2s, border-color 0.2s;
     }
     .citation:hover {
-      color: #27ae60;
-      background: #444;
+      color: #8fffc4;
+      background: rgba(46, 204, 113, 0.22);
+      border-color: rgba(94, 224, 160, 0.55);
+    }
+    .citation:focus-visible {
+      outline: 2px solid #5ee0a0;
+      outline-offset: 2px;
     }
     .download-btn {
       margin-left: auto;
@@ -503,28 +517,34 @@
       .paper-stats {
         flex-wrap: wrap;
       }
-      .research-point {
-    margin: 15px 0;
-    padding: 12px;
-    background: #2d2d2d;
-    border-radius: 8px;
-    border-left: 4px solid #4CAF50;
-}
+    }
 
-.point-bullet {
-    color: #4CAF50;
-    font-weight: bold;
-    margin-right: 8px;
-}
+    .research-point {
+      margin: 15px 0;
+      padding: 12px;
+      background: #2d2d2d;
+      border-radius: 8px;
+      border-left: 4px solid #4CAF50;
+    }
 
-.point-source {
-    font-size: 0.9em;
-    color: #888;
-    margin-left: 8px;
-    font-style: italic;
-}
+    .point-bullet {
+      color: #4CAF50;
+      font-weight: bold;
+      margin-right: 8px;
+    }
 
-.point-source::before {
-    content: "— ";
-}
+    .point-source {
+      font-size: 0.9em;
+      color: #888;
+      margin-left: 8px;
+      font-style: italic;
+    }
+
+    .point-source::before {
+      content: "— ";
+    }
+
+    .paper-card.paper-card--highlight {
+      box-shadow: 0 0 0 2px rgba(94, 224, 160, 0.45);
+      border-left-color: #5ee0a0;
     }

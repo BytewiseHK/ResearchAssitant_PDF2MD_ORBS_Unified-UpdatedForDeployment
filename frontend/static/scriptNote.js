@@ -85,16 +85,23 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (apiKeyInput) apiKeyInput.value = '';
         keyModal.classList.remove('hidden');
+        keyModal.setAttribute('aria-hidden', 'false');
         setTimeout(() => keyModal.classList.add('show'), 10);
         if (apiKeyInput) apiKeyInput.focus();
-        return false; // saving happens via modal buttons
+        return false;
     }
 
     async function ensureApiKey() {
         const has = await sessionHasKey();
         if (has) return true;
-        await promptForApiKey();
+        promptForApiKey();
         return false;
+    }
+
+    function resetSendStateAfterAbort() {
+        chatbotAnswered = true;
+        const empty = !messageInput.value.trim();
+        sendBtn.disabled = empty;
     }
 
     async function endSession() {
@@ -105,7 +112,10 @@ document.addEventListener('DOMContentLoaded', () => {
     function closeKeyModal() {
         if (!keyModal) return;
         keyModal.classList.remove('show');
-        setTimeout(() => keyModal.classList.add('hidden'), 200);
+        setTimeout(() => {
+            keyModal.classList.add('hidden');
+            keyModal.setAttribute('aria-hidden', 'true');
+        }, 200);
         if (apiKeyInput) apiKeyInput.value = '';
         if (keyError) {
             keyError.classList.add('hidden');
@@ -149,8 +159,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Initialize session + optionally request key
-    ensureApiKey();
+    // Same session model as Research Assistant: prompt for OpenRouter key if missing
+    (async () => {
+        const has = await sessionHasKey();
+        if (!has) promptForApiKey();
+    })();
 
 
     // -- Send message on Enter key, but allow Shift+Enter for new lines --
@@ -170,60 +183,34 @@ document.addEventListener('DOMContentLoaded', () => {
         messageInput.style.height = newHeight + 'px';
         
         // Enable/disable send button based on input
-        hasUserTyped = (messageInput.value.trim() === ''); // either true or false 
+        hasUserTyped = (messageInput.value.trim() === '');
         sendBtn.disabled = hasUserTyped;
-        if (sendBtn.disabled) {
-            sendBtn.classList.remove('text-blue-500');
-            sendBtn.classList.add('text-gray-500');
-        } else {
-            sendBtn.classList.remove('text-gray-500');
-            sendBtn.classList.add('text-blue-500');
-        }
     });
 
-    // --- Send message functions ---
-    // sendMessage calls addMessage to display message on the page
-    // fetchChatbotAnswer to get the response from the backend API
-    const sendMessage = () => {
-        // Get message from input and trim whitespace
-        // If empty, user is cringe and not allowed to send anything
+    const sendMessage = async () => {
         const message = messageInput.value.trim();
         if (message === '') return;
-        // If chatbot is still answering, user is cringe x2  
-        // and not allowed to send another message
-        if (chatbotAnswered == false) return;
+        if (chatbotAnswered === false) return;
+
+        const has = await sessionHasKey();
+        if (!has) {
+            promptForApiKey();
+            addMessage('Set your **OpenRouter API key** with the key icon above, then send again. Keys use the same session cookie as Research Assistant.', 'assistant');
+            return;
+        }
+
         chatbotAnswered = false;
 
-        if ((message.toLowerCase() === "/start") || (message.toLowerCase() === "start") || 
-        (message.toLowerCase() === "/next") || (message.toLowerCase() === "next")) {
-            console.log("Starting analysis of the notebook")
-
+        if ((message.toLowerCase() === "/start") || (message.toLowerCase() === "start") ||
+            (message.toLowerCase() === "/next") || (message.toLowerCase() === "next")) {
             addMessage(message, 'user');
-
             messageInput.value = '';
             sendBtn.disabled = true;
-            sendBtn.classList.remove('text-blue-500');
-            sendBtn.classList.add('text-gray-500');
-            // Trigger sending request to analysis endpoint
-            fetchChatbotAnalysis(message)
-        } 
-        else {
-            // Add user message to chat
-            // Using addMessage function, this function is
-            // going to create and insert html <div></div> block 
-            // that contains the message (either by AI or user) to the html page (index.html)
+            fetchChatbotAnalysis(message);
+        } else {
             addMessage(message, 'user');
-
-            // Clear input and disable send button, basically resetting the input field
-            // and making sure the user can't send empty messages 
-            // (disable button until user types something, 
-            // JS listens to any input, messageInput.addEventListener)
             messageInput.value = '';
             sendBtn.disabled = true;
-            sendBtn.classList.remove('text-blue-500');
-            sendBtn.classList.add('text-gray-500');
-
-            // Trigger chatbot answer fetch
             fetchChatbotAnswer(message);
         }
     };
@@ -231,56 +218,72 @@ document.addEventListener('DOMContentLoaded', () => {
     async function fetchChatbotAnswer(message) {
         try {
             const ok = await ensureApiKey();
-            if (!ok) return;
-            // Send POST request to the backend API
+            if (!ok) {
+                resetSendStateAfterAbort();
+                return;
+            }
             const response = await fetchWithSession('/chatbot-answer', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ role: 'user', content: message }) // Send message as JSON
+                body: JSON.stringify({ role: 'user', content: message })
             });
 
-            if (response.ok == false) {
+            if (response.status === 401) {
+                promptForApiKey();
+                addMessage('Your session needs an OpenRouter key again (401). Use the key icon, save, then retry.', 'assistant');
+                resetSendStateAfterAbort();
+                return;
+            }
+
+            if (!response.ok) {
                 throw new Error('Something went wrong with the request');
             }
 
             const botMessage = await response.json();
-            // Add bot response to chat
             addMessage(botMessage.content, 'assistant');
             chatbotAnswered = true;
         } catch (error) {
             console.error('Error fetching chatbot answer:', error);
-            // Add error message to chat
             addMessage('Sorry, I could not process your request. Please try again later.', 'assistant');
+            chatbotAnswered = true;
         }
     }
     // Backend API call for handling /start command
     async function fetchChatbotAnalysis(message) {
         try {
             const ok = await ensureApiKey();
-            if (!ok) return;
-            // Send POST request to the backend API
+            if (!ok) {
+                resetSendStateAfterAbort();
+                return;
+            }
             const response = await fetchWithSession('/analyze', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ role: 'user', content: message }) // Send message as JSON
+                body: JSON.stringify({ role: 'user', content: message })
             });
 
-            if (response.ok == false) {
+            if (response.status === 401) {
+                promptForApiKey();
+                addMessage('Your session needs an OpenRouter key again (401). Use the key icon, save, then run `/start` or `/next` again.', 'assistant');
+                resetSendStateAfterAbort();
+                return;
+            }
+
+            if (!response.ok) {
                 throw new Error('Something went wrong with the request');
             }
 
             const botMessage = await response.json();
-            // Add bot response to chat
             addMessage(botMessage.content, 'assistant');
             chatbotAnswered = true;
         } catch (error) {
-            console.error('Error fetching chatbot answer:', error);
-            // Add error message to chat
+            console.error('Error fetching chatbot analysis:', error);
             addMessage('Sorry, I could not process your request. Please try again later.', 'assistant');
+            chatbotAnswered = true;
         }
     }
 
@@ -290,55 +293,48 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Add message to chat ----
     const addMessage = (text, sender) => {
-        // Create a new message <div> element in memory
-        // This will the class (container) of the new message added
-        // We apply styling depending on the sender
         const messageDiv = document.createElement('div');
-        messageDiv.className = sender === 'user' ? 'flex flex-row-reverse mb-4' : 'flex mb-4';
+        messageDiv.className = sender === 'user' ? 'orbs-msg-row orbs-msg-row--user' : 'orbs-msg-row';
 
-        // The following connection variables determine the appearance of the message
-        // Depending on the sender (user or not-user), different classes are applied to the message
-        // Keep in mind the syntax of ternary operators: value ? valueIfTrue : valueIfFalse
-        const iconClass = (sender === 'user' ? 'fa-user' : 'fa-robot');
-        const iconBgClass = (sender === 'user' ? 'bg-gray-200' : 'bg-blue-100');
-        const iconColorClass = (sender === 'user' ? 'text-gray-500' : 'text-blue-500');
-        const marginClass = (sender === 'user' ? 'ml-2' : 'mr-2');
-        const messageClass = (sender === 'user' ? 'message user-message p-3 shadow-sm' : 'message assistant-message p-3 shadow-sm');
+        const iconClass = sender === 'user' ? 'fa-user' : 'fa-robot';
+        const avClass = sender === 'user' ? 'orbs-avatar orbs-avatar--user' : 'orbs-avatar orbs-avatar--bot';
+        const bubbleClass = sender === 'user' ? 'orbs-bubble orbs-bubble--user' : 'orbs-bubble orbs-bubble--bot';
 
-        const markdownContent = text
-
-        // Html structure prototype
-        if (sender == "user") {
-            let textHTML = text.replace("\n", "<br>");
+        if (sender === 'user') {
+            const textHTML = text.replace(/\n/g, '<br>');
             messageDiv.innerHTML = `
-                <div class="w-8 h-8 rounded-full ${iconBgClass} flex items-center justify-center ${marginClass} flex-shrink-0">
-                    <i class="fas ${iconClass} ${iconColorClass} text-sm"></i>
+                <div class="${avClass}">
+                    <i class="fas ${iconClass}"></i>
                 </div>
-                <div class="${messageClass}">
+                <div class="${bubbleClass}">
                     <p>${textHTML}</p>
                 </div>
             `;
         } else {
             messageDiv.innerHTML = `
-                <div class="w-8 h-8 rounded-full ${iconBgClass} flex items-center justify-center ${marginClass} flex-shrink-0">
-                    <i class="fas ${iconClass} ${iconColorClass} text-sm"></i>
+                <div class="${avClass}">
+                    <i class="fas ${iconClass}"></i>
                 </div>
-                <div class="${messageClass}">
-                    ${marked.parse(markdownContent)}
+                <div class="${bubbleClass}">
+                    <div class="orbs-md-content">${marked.parse(text)}</div>
                 </div>
             `;
         }
 
-        // Append the message to chat messages container
-        // Then scroll to the bottom of the chat container
         chatMessages.appendChild(messageDiv);
         chatMessages.scrollTop = chatMessages.scrollHeight;
     };
 
     // File upload modal 
     // Show upload modal, i.e. remove the view property hidden and add property show
-    attachBtn.addEventListener('click', () => {
+    attachBtn.addEventListener('click', async () => {
+        const has = await sessionHasKey();
+        if (!has) {
+            promptForApiKey();
+            return;
+        }
         uploadModal.classList.remove('hidden');
+        uploadModal.setAttribute('aria-hidden', 'false');
         setTimeout(() => {
             uploadModal.classList.add('show');
         }, 10);
@@ -350,8 +346,9 @@ document.addEventListener('DOMContentLoaded', () => {
         uploadModal.classList.remove('show');
         setTimeout(() => {
             uploadModal.classList.add('hidden');
+            uploadModal.setAttribute('aria-hidden', 'true');
         }, 300);
-        resetFileInput(); // make selectedFiles array empty
+        resetFileInput();
     };
 
     closeUpload.addEventListener('click', closeUploadModal);
@@ -410,44 +407,38 @@ document.addEventListener('DOMContentLoaded', () => {
         if (selectedFiles.length === 0) {
             filePreview.style.display = 'none';
             confirmUpload.disabled = true;
-            confirmUpload.classList.add('opacity-50', 'cursor-not-allowed');
+            confirmUpload.classList.add('is-disabled');
             return;
         }
 
         filePreview.style.display = 'block';
         fileCount.style.display = 'block';
         selectedCount.textContent = selectedFiles.length;
-        
-        // Clear existing file list
-        // This will remove all previous file items from the html preview on the page,
-        // just under the drag and drop area
+
         filesList.innerHTML = '';
-        
-        // Add each file to the preview
+
         selectedFiles.forEach((file, index) => {
             const fileItem = document.createElement('div');
-            fileItem.className = 'flex items-center justify-between p-2 bg-gray-50 rounded border';
-            
-            // Get file icon based on file type
+            fileItem.className = 'orbs-file-item';
+
             const fileIcon = getFileIcon(file.type);
-            
-            // We will implement removeFileByIndex function later
+
             fileItem.innerHTML = `
-                <div class="flex items-center flex-1 min-w-0">
-                    <i class="fas ${fileIcon} text-blue-500 mr-2 flex-shrink-0"></i>
-                    <span class="text-sm text-gray-700 truncate">${file.name}</span>
-                    <span class="text-xs text-gray-500 ml-2 flex-shrink-0">(${formatFileSize(file.size)})</span>
+                <div class="orbs-file-item-main">
+                    <i class="fas ${fileIcon}"></i>
+                    <span class="orbs-file-item-name">${file.name}</span>
+                    <span class="orbs-file-item-meta">(${formatFileSize(file.size)})</span>
                 </div>
-                <button class="text-gray-500 hover:text-red-500 ml-2 flex-shrink-0" onclick="removeFileByIndex(${index})">
+                <button type="button" class="orbs-file-item-remove" onclick="removeFileByIndex(${index})" aria-label="Remove file">
                     <i class="fas fa-times"></i>
                 </button>
             `;
-            
+
             filesList.appendChild(fileItem);
         });
 
         confirmUpload.disabled = false;
-        confirmUpload.classList.remove('opacity-50', 'cursor-not-allowed');
+        confirmUpload.classList.remove('is-disabled');
     };
 
     // Get appropriate icon for file type
@@ -490,27 +481,42 @@ document.addEventListener('DOMContentLoaded', () => {
         // and so no files will be shown in the preview
     }
 
-    // Confirm upload button
     confirmUpload.addEventListener('click', async () => {
-        if (selectedFiles.length > 0) {
-            // Show uploading message immediately
-            if (selectedFiles.length === 1) {
-                let fileTitle = selectedFiles[0].name;
-                addMessage(`Uploading file: ${fileTitle}...`, 'user');
-            } else {
-                const fileNames = selectedFiles.map(f => f.name).join(', ');
-                let filesLength = selectedFiles.length;
-                addMessage(`Uploading ${filesLength} files: ${fileNames}...`, 'user');
-            }
+        if (selectedFiles.length === 0) {
+            closeUploadModal();
+            return;
+        }
 
-            // Actually send files to backend
-            try {
-                const uploadResult = await sendFilesToBackend(selectedFiles);
-                handleUploadResponse(uploadResult);
-            } catch (error) {
-                console.error('Upload error:', error);
-                addMessage('Sorry, there was an error uploading your files. Please try again.', 'assistant');
+        const hasKey = await sessionHasKey();
+        if (!hasKey) {
+            promptForApiKey();
+            addMessage('Set your **OpenRouter API key** first, then confirm upload again.', 'assistant');
+            return;
+        }
+
+        if (selectedFiles.length === 1) {
+            addMessage(`Uploading file: ${selectedFiles[0].name}...`, 'user');
+        } else {
+            const fileNames = selectedFiles.map(f => f.name).join(', ');
+            addMessage(`Uploading ${selectedFiles.length} files: ${fileNames}...`, 'user');
+        }
+
+        try {
+            const uploadResult = await sendFilesToBackend(selectedFiles);
+            handleUploadResponse(uploadResult);
+        } catch (error) {
+            console.error('Upload error:', error);
+            if (error.message === 'KEY_REQUIRED' || error.message === 'KEY_401') {
+                promptForApiKey();
+                addMessage(
+                    error.message === 'KEY_401'
+                        ? 'Session rejected the key (401). Save a new OpenRouter key, then upload again.'
+                        : 'OpenRouter key is required for upload. Save it in the modal, then try again.',
+                    'assistant'
+                );
+                return;
             }
+            addMessage('Sorry, there was an error uploading your files. Please try again.', 'assistant');
         }
 
         closeUploadModal();
@@ -519,18 +525,21 @@ document.addEventListener('DOMContentLoaded', () => {
     // Backend API call for file saving
     async function sendFilesToBackend(files) {
         const ok = await ensureApiKey();
-        if (!ok) throw new Error('OpenRouter API key required');
+        if (!ok) throw new Error('KEY_REQUIRED');
         const formData = new FormData();
-        
-        // Add each selected file to FormData
+
         files.forEach(file => {
             formData.append('files', file);
         });
 
         const response = await fetchWithSession('/files-upload', {
             method: 'POST',
-            body: formData // Don't set Content-Type header, browser will set it with boundary
+            body: formData
         });
+
+        if (response.status === 401) {
+            throw new Error('KEY_401');
+        }
 
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
@@ -651,8 +660,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Share functionality, share modal show
     shareBtn.addEventListener('click', () => {
-        shareLink.value = window.location.href; // Get current page's link
+        shareLink.value = window.location.href;
         shareModal.classList.remove('hidden');
+        shareModal.setAttribute('aria-hidden', 'false');
         setTimeout(() => {
             shareModal.classList.add('show');
         }, 10);
@@ -663,6 +673,7 @@ document.addEventListener('DOMContentLoaded', () => {
         shareModal.classList.remove('show');
         setTimeout(() => {
             shareModal.classList.add('hidden');
+            shareModal.setAttribute('aria-hidden', 'true');
         }, 300);
     });
 
@@ -674,11 +685,11 @@ document.addEventListener('DOMContentLoaded', () => {
         // Show copy link confirmation
         const originalIcon = copyLink.innerHTML;
         copyLink.innerHTML = '<i class="fas fa-check"></i>';
-        copyLink.classList.add('text-green-500');
-        
+        copyLink.classList.add('copy-flash');
+
         setTimeout(() => {
             copyLink.innerHTML = originalIcon;
-            copyLink.classList.remove('text-green-500');
+            copyLink.classList.remove('copy-flash');
         }, 2000);
     });
 });
