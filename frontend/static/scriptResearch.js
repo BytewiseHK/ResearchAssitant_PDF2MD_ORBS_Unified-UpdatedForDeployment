@@ -67,8 +67,22 @@ document.addEventListener('DOMContentLoaded', function() {
         return `${point.text} <span class="point-source">${point.source}</span>`;
       }
 
+      /** Same-origin default; set <meta name="api-base-url" content="https://your-api.host"> if the UI is hosted on another domain as the API (cookies may require extra CORS setup). */
+      function getApiBase() {
+        try {
+          const m = document.querySelector('meta[name="api-base-url"]')
+          const raw = m != null && m.getAttribute('content') != null ? String(m.getAttribute('content')).trim() : ''
+          return raw.replace(/\/$/, '')
+        } catch (_) {
+          return ''
+        }
+      }
+
       async function fetchWithSession(url, options = {}) {
-        return fetch(url, { credentials: 'include', ...options })
+        const base = getApiBase()
+        const path = url.startsWith('/') ? url : '/' + url
+        const fullUrl = base ? `${base}${path}` : path
+        return fetch(fullUrl, { credentials: 'include', ...options })
       }
 
       async function refreshSessionStatus() {
@@ -237,11 +251,18 @@ document.addEventListener('DOMContentLoaded', function() {
         writeSuggestHint.value = ''
         writeCandidates.value = []
         try {
-          const response = await fetchWithSession('/write/candidates', {
+          let response = await fetchWithSession('/research/candidates', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ prompt: prompt.value.trim() })
           })
+          if (response.status === 404) {
+            response = await fetchWithSession('/write/candidates', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ prompt: prompt.value.trim() })
+            })
+          }
           if (!response.ok) {
             const t = await response.text()
             throw new Error(t || 'Request failed')

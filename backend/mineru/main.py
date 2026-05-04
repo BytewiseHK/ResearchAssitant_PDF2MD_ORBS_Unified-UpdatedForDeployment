@@ -647,11 +647,8 @@ os.makedirs(settings.upload_dir, exist_ok=True)
 os.makedirs(settings.temp_dir, exist_ok=True)
 os.makedirs(settings.frontend_path, exist_ok=True)
 
-# Mount frontend
-app.mount("/app/static", StaticFiles(directory=settings.static_path, html=True), name="static")
-app.mount("/app/notebook", StaticFiles(directory=settings.note_path, html=True), name="notebook")
-app.mount("/app/research", StaticFiles(directory=settings.research_path, html=True), name="research")
-app.mount("/app", StaticFiles(directory=settings.frontend_path, html=True), name="main_app")
+# Frontend StaticFiles mounts are registered after all API routes (see end of file) so
+# JSON routes like /write/candidates are never shadowed by catch-all behavior.
 
 # ======================
 # Session endpoints
@@ -950,6 +947,7 @@ async def upload_file(request: Request, file: UploadFile = File(...)):
 
 
 @app.post("/write/candidates")
+@app.post("/research/candidates")  # alias (same handler) if proxies block paths containing "write"
 async def write_paper_candidates(request: GenerateRequest, http_request: Request):
     """LLM ranks all DB papers using abstract (or opening excerpt); for Write-mode checkbox UI."""
     if not (request.prompt or "").strip():
@@ -1354,6 +1352,13 @@ async def download_markdown(paper_id: str):
     except Exception as e:
         logger.error(f"Download failed: {str(e)}")
         raise HTTPException(500, "Failed to download markdown file")
+
+
+# Mount frontend last so API routes above take precedence on this app instance.
+app.mount("/app/static", StaticFiles(directory=settings.static_path, html=True), name="static")
+app.mount("/app/notebook", StaticFiles(directory=settings.note_path, html=True), name="notebook")
+app.mount("/app/research", StaticFiles(directory=settings.research_path, html=True), name="research")
+app.mount("/app", StaticFiles(directory=settings.frontend_path, html=True), name="main_app")
 
 
 if __name__ == "__main__":
