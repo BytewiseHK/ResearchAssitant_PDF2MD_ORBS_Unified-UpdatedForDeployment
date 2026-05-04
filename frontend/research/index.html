@@ -4,6 +4,8 @@
   <base href="/app/">  <!-- Add this in <head> -->
   <!-- If this page is served from a static host while the API lives elsewhere, set your FastAPI origin (no trailing slash), e.g. https://your-service.onrender.com -->
   <meta name="api-base-url" content="">
+  <!-- Rare: reverse proxy mounts API under a prefix; e.g. content="/api/v1" → requests go to origin + prefix + path -->
+  <meta name="api-path-prefix" content="">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Bytewise Research Assistant</title>
@@ -139,7 +141,8 @@
     <div v-if="mode === 'write'">
       <h2><i class="fas fa-lightbulb"></i> Research Prompt</h2>
       <p class="write-mode-hint">
-        An LLM reads each paper’s <strong>Abstract</strong> section in the stored markdown (from the PDF pipeline), or a short opening excerpt if no Abstract heading exists, then suggests which sources match your topic. Refine with the checkboxes before generating points.
+        Optional: <strong>Suggest sources</strong> ranks papers by abstract so you can refine checkboxes.
+        You can also <strong>Generate research points</strong> directly — the server will pick relevant papers when no list is shown below.
       </p>
       
       <textarea v-model="prompt" 
@@ -151,7 +154,7 @@
           <span v-if="isSuggestingWrite" class="loading-spinner"></span>
           <span v-else><i class="fas fa-filter"></i> Suggest sources (abstracts)</span>
         </button>
-        <button type="button" class="btn btn-secondary" @click="generatePoints" :disabled="!prompt.trim() || !hasWritePaperSelection || isGenerating || isSuggestingWrite">
+        <button type="button" class="btn btn-secondary" @click="generatePoints" :disabled="!canGenerateWritePoints">
           <span v-if="isGenerating" class="loading-spinner"></span>
           <span v-else><i class="fas fa-bolt"></i> Generate research points</span>
         </button>

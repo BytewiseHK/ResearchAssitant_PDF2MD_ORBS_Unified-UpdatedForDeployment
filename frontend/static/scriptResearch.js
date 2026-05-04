@@ -67,7 +67,7 @@ document.addEventListener('DOMContentLoaded', function() {
         return `${point.text} <span class="point-source">${point.source}</span>`;
       }
 
-      /** Same-origin default; set <meta name="api-base-url" content="https://your-api.host"> if the UI is hosted on another domain as the API (cookies may require extra CORS setup). */
+      /** Full API origin override when HTML is not served by FastAPI (cookies need CORS). No trailing slash. */
       function getApiBase() {
         try {
           const m = document.querySelector('meta[name="api-base-url"]')
@@ -78,11 +78,37 @@ document.addEventListener('DOMContentLoaded', function() {
         }
       }
 
-      async function fetchWithSession(url, options = {}) {
-        const base = getApiBase()
-        const path = url.startsWith('/') ? url : '/' + url
-        const fullUrl = base ? `${base}${path}` : path
-        return fetch(fullUrl, { credentials: 'include', ...options })
+      /** Path between origin and route (e.g. /api/v1) when behind a path-based reverse proxy. */
+      function getApiPathPrefix() {
+        try {
+          const m = document.querySelector('meta[name="api-path-prefix"]')
+          const raw = m != null && m.getAttribute('content') != null ? String(m.getAttribute('content')).trim() : ''
+          if (!raw) return ''
+          const p = raw.startsWith('/') ? raw : '/' + raw
+          return p.replace(/\/$/, '')
+        } catch (_) {
+          return ''
+        }
+      }
+
+      /**
+       * Absolute URL for API calls so the document base tag cannot send requests to the wrong path.
+       */
+      function resolveApiUrl(urlPath) {
+        const path = urlPath.startsWith('/') ? urlPath : '/' + urlPath
+        const configured = getApiBase()
+        if (configured) {
+          return `${configured}${path}`
+        }
+        const prefix = getApiPathPrefix()
+        if (typeof window !== 'undefined' && window.location && window.location.origin) {
+          return `${window.location.origin}${prefix}${path}`
+        }
+        return path
+      }
+
+      async function fetchWithSession(urlPath, options = {}) {
+        return fetch(resolveApiUrl(urlPath), { credentials: 'include', ...options })
       }
 
       async function refreshSessionStatus() {
@@ -144,9 +170,13 @@ document.addEventListener('DOMContentLoaded', function() {
         return 'processing'
       })
       
-      const hasWritePaperSelection = computed(() =>
-        writeCandidates.value.some((c) => c.checked)
-      )
+      /** Generate enabled: always when prompt OK if no candidate panel; otherwise need ≥1 checked box. */
+      const canGenerateWritePoints = computed(() => {
+        if (!prompt.value.trim()) return false
+        if (isGenerating.value || isSuggestingWrite.value) return false
+        if (!writeCandidates.value.length) return true
+        return writeCandidates.value.some((c) => c.checked)
+      })
 
       /** Turn [1]…[n] into green citation chips (same order as /discuss paper list). Skips [2024]-style brackets. */
       function linkifyDiscussionCitations(html, paperIdsOrdered) {
@@ -251,21 +281,26 @@ document.addEventListener('DOMContentLoaded', function() {
         writeSuggestHint.value = ''
         writeCandidates.value = []
         try {
-          let response = await fetchWithSession('/research/candidates', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: prompt.value.trim() })
-          })
-          if (response.status === 404) {
-            response = await fetchWithSession('/write/candidates', {
+          const payload = JSON.stringify({ prompt: prompt.value.trim() })
+          const tryEndpoints = ['/research/candidates', '/write/candidates']
+          let response = null
+          for (const ep of tryEndpoints) {
+            response = await fetchWithSession(ep, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ prompt: prompt.value.trim() })
+              body: payload
             })
+            if (response.ok) break
+            if (response.status !== 404) {
+              const t = await response.text()
+              throw new Error((t || response.statusText || 'Request failed').slice(0, 400))
+            }
           }
-          if (!response.ok) {
-            const t = await response.text()
-            throw new Error(t || 'Request failed')
+          if (!response || !response.ok) {
+            const tried = tryEndpoints.map((e) => resolveApiUrl(e)).join(' · ')
+            throw new Error(
+              `API returned 404 for suggest-sources (${tried}). Redeploy the latest backend, or set meta api-base-url / api-path-prefix if the API is not on this origin.`
+            )
           }
           const data = await response.json()
           if (data.status !== 'success') {
@@ -379,13 +414,10 @@ document.addEventListener('DOMContentLoaded', function() {
       async function generatePoints() {
         if (!prompt.value.trim()) return
 
+        const hasPanel = writeCandidates.value.length > 0
         const selectedIds = writeCandidates.value.filter((c) => c.checked).map((c) => c.id)
-        if (!writeCandidates.value.length) {
-          writeSuggestHint.value = 'Click “Suggest sources (abstracts)” first. The assistant scores each abstract (or opening excerpt), then you pick papers with the checkboxes.'
-          return
-        }
-        if (!selectedIds.length) {
-          writeSuggestHint.value = 'Select at least one paper with the checkboxes before generating points (or use Select all).'
+        if (hasPanel && !selectedIds.length) {
+          writeSuggestHint.value = 'Select at least one paper (checkboxes), use Select all, or refresh the page and generate without using Suggest.'
           return
         }
 
@@ -398,10 +430,14 @@ document.addEventListener('DOMContentLoaded', function() {
         usedPaperIds.value = []
         
         try {
+          const genBody = hasPanel
+            ? { prompt: prompt.value, paper_ids: selectedIds }
+            : { prompt: prompt.value }
+
           const response = await fetchWithSession('/generate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: prompt.value, paper_ids: selectedIds })
+            body: JSON.stringify(genBody)
           })
           
           progress.value = 70
@@ -428,7 +464,7 @@ document.addEventListener('DOMContentLoaded', function() {
           // Store the paper IDs used for these points
           if (data.paper_ids && data.paper_ids.length) {
             usedPaperIds.value = data.paper_ids
-          } else {
+          } else if (hasPanel && selectedIds.length) {
             usedPaperIds.value = selectedIds
           }
         } catch (error) {
@@ -745,7 +781,7 @@ document.addEventListener('DOMContentLoaded', function() {
         usedPaperIds,
         writeCandidates,
         writeSuggestHint,
-        hasWritePaperSelection,
+        canGenerateWritePoints,
         statusClass,
         loadingDatabase,
         databaseError,
