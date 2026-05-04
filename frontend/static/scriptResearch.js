@@ -242,6 +242,15 @@ document.addEventListener('DOMContentLoaded', function() {
 
         function inject(chunk) {
           let s = chunk
+          // Replace "Paper 1" style refs with placeholders first so we never match inside the span we add.
+          const paperSlots = []
+          s = s.replace(/\bPapers?\s+(\d{1,3})\b/gi, (full, numStr) => {
+            const n = parseInt(numStr, 10)
+            if (n < 1 || n > maxIdx) return full
+            const token = `\uE000${paperSlots.length}PAPERCITE\uE001`
+            paperSlots.push({ token, n, full })
+            return token
+          })
           s = s.replace(/\[\s*(\d+)\s*\]/g, (full, numStr) => {
             const n = parseInt(numStr, 10)
             if (n < 1 || n > maxIdx) return full
@@ -252,6 +261,9 @@ document.addEventListener('DOMContentLoaded', function() {
             if (n < 1 || n > maxIdx) return full
             return citeSpan(n, `(${n})`)
           })
+          for (const { token, n, full } of paperSlots) {
+            s = s.split(token).join(citeSpan(n, full))
+          }
           return s
         }
 

@@ -1127,7 +1127,7 @@ FOLLOW-UP QUESTION:
 {request.prompt.strip()[:4000]}
 
 Guidelines:
-- Ground the answer in the prior discussion and papers; cite as [1], [2], etc.
+- Ground the answer in the prior discussion and papers; cite as [1], [2], etc. (Do not use "Paper 1" / "Paper 2" phrasing for references—use bracket numbers only.)
 - If a short factual answer suffices, stay brief; otherwise about 350–900 words."""
         else:
             discussion_prompt = f"""Generate a comprehensive discussion about: {request.prompt}
@@ -1140,7 +1140,7 @@ GUIDELINES:
 2. Compare and contrast perspectives across ALL papers, not just the first few
 3. Identify patterns, contradictions, and consensus across the entire corpus
 4. Highlight areas of agreement/disagreement among ALL sources
-5. Use [1], [2], [3], etc. for citations matching ALL paper numbers
+5. Use [1], [2], [3], etc. for citations matching ALL paper numbers (not "Paper 1" / "source 2" free text)
 6. Discuss limitations and future directions considering ALL evidence
 7. Maintain academic tone but avoid jargon
 8. Use markdown (## sections, **emphasis**) for readability
