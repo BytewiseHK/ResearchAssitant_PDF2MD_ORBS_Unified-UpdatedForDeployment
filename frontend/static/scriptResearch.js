@@ -7,7 +7,7 @@ document.addEventListener('DOMContentLoaded', function() {
     return;
   }
   
-  const { createApp, ref, computed, watch, nextTick } = Vue;
+  const { createApp, ref, computed, watch, nextTick, onMounted } = Vue;
   
   // Check if the app container exists
   const appContainer = document.getElementById('app');
@@ -28,7 +28,15 @@ document.addEventListener('DOMContentLoaded', function() {
         }
       }
 
-      const mode = ref('review')
+      function readInitialModeFromUrl() {
+        try {
+          const p = new URLSearchParams(window.location.search)
+          if (p.get('mode') === 'database' && p.get('paper')) return 'database'
+        } catch (_) {}
+        return 'review'
+      }
+
+      const mode = ref(readInitialModeFromUrl())
       const file = ref(null)
       const isDragging = ref(false)
       const isProcessing = ref(false)
@@ -178,22 +186,37 @@ document.addEventListener('DOMContentLoaded', function() {
         return writeCandidates.value.some((c) => c.checked)
       })
 
-      /** Turn [1]…[n] into green citation chips (same order as /discuss paper list). Skips [2024]-style brackets. */
+      /** Turn numeric citations into green chips (order = usedPaperIds / discussion paper list). Skips pre/code blocks. */
       function linkifyDiscussionCitations(html, paperIdsOrdered) {
         const ids = paperIdsOrdered || []
         if (!ids.length || !html) return html
         const maxIdx = ids.length
-        const parts = html.split(/(<pre[\s\S]*?<\/pre>)/gi)
-        return parts.map((part, i) => {
-          if (i % 2 === 1) return part
-          return part.replace(/\[(\d+)\]/g, (full, numStr) => {
+
+        function citeSpan(n, innerHtml) {
+          const pid = ids[n - 1]
+          if (!pid) return innerHtml
+          const safe = String(pid).replace(/"/g, '&quot;')
+          return `<span class="citation discussion-cite" data-paper-id="${safe}" role="link" tabindex="0" title="Open paper in database (new tab)">${innerHtml}</span>`
+        }
+
+        function inject(chunk) {
+          let s = chunk
+          s = s.replace(/\[\s*(\d+)\s*\]/g, (full, numStr) => {
             const n = parseInt(numStr, 10)
             if (n < 1 || n > maxIdx) return full
-            const pid = ids[n - 1]
-            if (!pid) return full
-            return `<span class="citation discussion-cite" data-paper-id="${String(pid).replace(/"/g, '&quot;')}" role="link" tabindex="0" title="Open in database">[${n}]</span>`
+            return citeSpan(n, `[${n}]`)
           })
-        }).join('')
+          s = s.replace(/\((\d{1,3})\)/g, (full, numStr) => {
+            const n = parseInt(numStr, 10)
+            if (n < 1 || n > maxIdx) return full
+            return citeSpan(n, `(${n})`)
+          })
+          return s
+        }
+
+        const skipBlocks = /(<(?:pre|code)\b[^>]*>[\s\S]*?<\/(?:pre|code)>)/gi
+        const parts = html.split(skipBlocks)
+        return parts.map((part) => (/^<(pre|code)\b/i.test(part) ? part : inject(part))).join('')
       }
 
       const discussionHtml = computed(() => {
@@ -217,11 +240,24 @@ document.addEventListener('DOMContentLoaded', function() {
         )
       })
 
+      function openDatabasePaperInNewTab(paperId) {
+        if (!paperId || typeof window === 'undefined') return
+        try {
+          const u = new URL('/app/research/', window.location.origin)
+          u.searchParams.set('mode', 'database')
+          u.searchParams.set('paper', paperId)
+          const w = window.open(u.toString(), '_blank', 'noopener,noreferrer')
+          if (!w) navigateToSource(paperId)
+        } catch (_) {
+          navigateToSource(paperId)
+        }
+      }
+
       function onDiscussionCitationClick(e) {
         const el = e.target && e.target.closest && e.target.closest('.discussion-cite[data-paper-id]')
         if (!el) return
         const id = el.getAttribute('data-paper-id')
-        if (id) navigateToSource(id)
+        if (id) openDatabasePaperInNewTab(id)
       }
 
       function onDiscussionCitationKeydown(e) {
@@ -230,7 +266,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!el) return
         e.preventDefault()
         const id = el.getAttribute('data-paper-id')
-        if (id) navigateToSource(id)
+        if (id) openDatabasePaperInNewTab(id)
       }
 
       const filteredPapers = computed(() => {
@@ -621,13 +657,9 @@ document.addEventListener('DOMContentLoaded', function() {
         }
       }
       
-      async function navigateToSource(paperId) {
+      async function revealPaperInDatabase(paperId) {
         if (!paperId) return
-        searchQuery.value = ''
-        mode.value = 'database'
-        await loadDatabase()
-        await nextTick()
-        const paper = papers.value.find(p => p.id === paperId)
+        const paper = papers.value.find((p) => p.id === paperId)
         if (!paper) {
           statusMessage.value = 'Could not find that paper in the database (it may have been removed).'
           return
@@ -643,6 +675,15 @@ document.addEventListener('DOMContentLoaded', function() {
         card?.scrollIntoView({ behavior: 'smooth', block: 'center' })
         card?.classList.add('paper-card--highlight')
         window.setTimeout(() => card?.classList.remove('paper-card--highlight'), 2600)
+      }
+
+      async function navigateToSource(paperId) {
+        if (!paperId) return
+        searchQuery.value = ''
+        mode.value = 'database'
+        await loadDatabase()
+        await nextTick()
+        await revealPaperInDatabase(paperId)
       }
       
       function stemToMdDownloadName(filename) {
@@ -755,6 +796,28 @@ document.addEventListener('DOMContentLoaded', function() {
           loadDatabase();
         }
       });
+
+      onMounted(() => {
+        nextTick(async () => {
+          try {
+            const params = new URLSearchParams(window.location.search)
+            const pid = params.get('paper')
+            if (params.get('mode') !== 'database' || !pid) return
+            if (!papers.value.length) await loadDatabase()
+            await nextTick()
+            await revealPaperInDatabase(pid)
+            try {
+              const u = new URL(window.location.href)
+              u.searchParams.delete('paper')
+              u.searchParams.delete('mode')
+              const qs = u.searchParams.toString()
+              window.history.replaceState({}, '', u.pathname + (qs ? '?' + qs : '') + u.hash)
+            } catch (_) {}
+          } catch (e) {
+            console.warn('Database deep link:', e)
+          }
+        })
+      })
 
       // On first load, initialize session + optionally request key
       refreshSessionStatus().then(() => {

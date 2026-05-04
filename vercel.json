@@ -12,6 +12,8 @@
     { "src": "^/analyze$", "dest": "https://researchassitant-pdf2md-orbs-unified.onrender.com/analyze" },
     { "src": "^/upload$", "dest": "https://researchassitant-pdf2md-orbs-unified.onrender.com/upload" },
     { "src": "^/generate$", "dest": "https://researchassitant-pdf2md-orbs-unified.onrender.com/generate" },
+    { "src": "^/research/candidates$", "dest": "https://researchassitant-pdf2md-orbs-unified.onrender.com/research/candidates" },
+    { "src": "^/write/candidates$", "dest": "https://researchassitant-pdf2md-orbs-unified.onrender.com/write/candidates" },
     { "src": "^/discuss$", "dest": "https://researchassitant-pdf2md-orbs-unified.onrender.com/discuss" },
     { "src": "^/database/(.*)$", "dest": "https://researchassitant-pdf2md-orbs-unified.onrender.com/database/$1" },
     { "src": "^/database$", "dest": "https://researchassitant-pdf2md-orbs-unified.onrender.com/database" },
