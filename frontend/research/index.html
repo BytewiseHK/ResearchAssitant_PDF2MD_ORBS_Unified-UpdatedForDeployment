@@ -88,7 +88,7 @@
            @dragleave="isDragging = false"
            @drop.prevent="handleDrop"
            @click="triggerFileInput">
-        <div class="upload-icon">
+        <div v-if="!file" class="upload-icon">
           <i class="fas fa-cloud-upload-alt"></i>
         </div>
         <p v-if="!file">Drag & drop your PDF here or click to browse</p>
