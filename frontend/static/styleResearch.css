@@ -542,6 +542,19 @@
       display: flex;
       align-items: center;
       gap: 10px;
+      flex-wrap: wrap;
+    }
+    .paper-title-name {
+      flex: 1;
+      min-width: 0;
+      word-break: break-word;
+    }
+    .paper-title-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: auto;
+      flex-shrink: 0;
     }
     .paper-meta {
       font-size: 14px;
@@ -650,7 +663,6 @@
       outline-offset: 2px;
     }
     .download-btn {
-      margin-left: auto;
       background: #666;
       color: white;
       border: none;
@@ -662,6 +674,31 @@
     }
     .download-btn:hover {
       background: #555;
+    }
+    .delete-paper-btn {
+      background: transparent;
+      color: #e57373;
+      border: 1px solid rgba(229, 115, 115, 0.45);
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s, border-color 0.2s;
+    }
+    .delete-paper-btn:hover {
+      background: rgba(229, 115, 115, 0.15);
+      color: #ff8a80;
+      border-color: rgba(255, 138, 128, 0.6);
+    }
+    .btn-danger-outline {
+      background: transparent;
+      color: #e57373;
+      border: 2px solid rgba(229, 115, 115, 0.55);
+    }
+    .btn-danger-outline:hover:not(:disabled) {
+      background: rgba(229, 115, 115, 0.12);
+      color: #ffab91;
+      border-color: rgba(255, 171, 145, 0.7);
     }
     @media (max-width: 768px) {
       body {

@@ -642,6 +642,56 @@ document.addEventListener('DOMContentLoaded', function() {
           statusMessage.value = `Download failed: ${error.message}`;
         }
       }
+
+      async function deletePaper(paperId) {
+        if (!paperId) return
+        if (!window.confirm('Remove this paper from the database? Files on disk for this upload will be deleted. This cannot be undone.')) {
+          return
+        }
+        databaseError.value = ''
+        try {
+          const response = await fetchWithSession(`/database/${encodeURIComponent(paperId)}`, {
+            method: 'DELETE',
+            headers: { Accept: 'application/json' }
+          })
+          const data = await response.json().catch(() => ({}))
+          if (!response.ok) {
+            const d = data.detail
+            const msg = typeof d === 'string' ? d : (Array.isArray(d) ? d.map((x) => x.msg || x).join('; ') : (data.message || response.statusText))
+            throw new Error(msg || 'Delete failed')
+          }
+          papers.value = papers.value.filter((p) => p.id !== paperId)
+          statusMessage.value = 'Paper removed from the database.'
+        } catch (error) {
+          databaseError.value = error.message || 'Failed to delete paper'
+        }
+      }
+
+      async function deleteAllPapers() {
+        if (!papers.value.length) return
+        if (!window.confirm(`Delete all ${papers.value.length} paper(s) from the database? This cannot be undone.`)) {
+          return
+        }
+        databaseError.value = ''
+        try {
+          const response = await fetchWithSession('/database', {
+            method: 'DELETE',
+            headers: { Accept: 'application/json' }
+          })
+          const data = await response.json().catch(() => ({}))
+          if (!response.ok) {
+            const d = data.detail
+            const msg = typeof d === 'string' ? d : (Array.isArray(d) ? d.map((x) => x.msg || x).join('; ') : (data.message || response.statusText))
+            throw new Error(msg || 'Delete failed')
+          }
+          papers.value = []
+          statusMessage.value = data.deleted != null
+            ? `Removed ${data.deleted} paper(s) from the database.`
+            : 'Database cleared.'
+        } catch (error) {
+          databaseError.value = error.message || 'Failed to delete all papers'
+        }
+      }
       
       watch(() => mode.value, (newMode) => {
         if (newMode === 'database' && papers.value.length === 0) {
@@ -699,6 +749,8 @@ document.addEventListener('DOMContentLoaded', function() {
         togglePaperDetails,
         navigateToSource,
         downloadMarkdown,
+        deletePaper,
+        deleteAllPapers,
         onDiscussionCitationClick,
         onDiscussionCitationKeydown,
         formatPoint,

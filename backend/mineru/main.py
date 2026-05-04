@@ -1225,6 +1225,68 @@ async def view_paper_details(paper_id: str):
         logger.error(f"Paper details failed: {str(e)}")
         raise HTTPException(500, str(e))
 
+
+def _valid_paper_id(paper_id: str) -> bool:
+    try:
+        uuid.UUID(str(paper_id))
+        return True
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+
+def _delete_paper_artifacts(paper_id: str) -> None:
+    """Remove MinerU output directory for this paper id (best-effort)."""
+    paper_dir = os.path.join(settings.mineru_output_dir, paper_id)
+    try:
+        if os.path.isdir(paper_dir):
+            shutil.rmtree(paper_dir, ignore_errors=True)
+    except Exception as e:
+        logger.warning("Could not remove mineru output dir %s: %s", paper_dir, e)
+
+
+@app.delete("/database/{paper_id}")
+async def delete_paper(paper_id: str):
+    """Delete one paper from SQLite and remove its mineru_output folder."""
+    if not _valid_paper_id(paper_id):
+        raise HTTPException(status_code=400, detail="Invalid paper id")
+    try:
+        conn = sqlite3.connect(settings.database_path)
+        cur = conn.execute("DELETE FROM papers WHERE id = ?", (paper_id,))
+        deleted = cur.rowcount
+        conn.commit()
+        conn.close()
+        if deleted == 0:
+            raise HTTPException(status_code=404, detail="Paper not found")
+        _delete_paper_artifacts(paper_id)
+        logger.info("Deleted paper %s", paper_id)
+        return {"status": "success", "deleted": 1, "id": paper_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete paper failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete paper")
+
+
+@app.delete("/database")
+async def delete_all_papers():
+    """Delete every paper and associated output directories."""
+    try:
+        conn = sqlite3.connect(settings.database_path)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT id FROM papers").fetchall()
+        conn.execute("DELETE FROM papers")
+        conn.commit()
+        conn.close()
+        for r in rows:
+            _delete_paper_artifacts(r["id"])
+        n = len(rows)
+        logger.info("Deleted all papers (%s rows)", n)
+        return {"status": "success", "deleted": n}
+    except Exception as e:
+        logger.error(f"Delete all papers failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to clear database")
+
+
 def _safe_download_basename(original_filename: str) -> str:
     """Stem from stored DB filename (usually the PDF name), ASCII-safe for Content-Disposition."""
     base = os.path.splitext((original_filename or "paper").strip())[0] or "paper"

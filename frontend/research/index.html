@@ -245,8 +245,16 @@
       
       <div class="search-bar">
         <input type="text" v-model="searchQuery" placeholder="Search papers by title or content...">
-        <button class="btn" @click="loadDatabase">
+        <button type="button" class="btn" @click="loadDatabase">
           <i class="fas fa-sync-alt"></i> Refresh
+        </button>
+        <button
+          v-if="papers.length"
+          type="button"
+          class="btn btn-danger-outline"
+          title="Remove every paper from the database"
+          @click="deleteAllPapers">
+          <i class="fas fa-trash-alt"></i> Delete all
         </button>
       </div>
       
@@ -265,13 +273,20 @@
                :class="{ expanded: paper.expanded }">
             <div>
               <div class="paper-title">
-                <i class="fas fa-file-pdf"></i> 
-                {{ paper.filename || 'Untitled Document' }}
-                <button class="download-btn"
-                        @click.stop="downloadMarkdown(paper.id, paper.filename)"
-                        title="Download Markdown">
-                  <i class="fas fa-download"></i> MD
-                </button>
+                <i class="fas fa-file-pdf"></i>
+                <span class="paper-title-name">{{ paper.filename || 'Untitled Document' }}</span>
+                <span class="paper-title-actions">
+                  <button type="button" class="download-btn"
+                          @click.stop="downloadMarkdown(paper.id, paper.filename)"
+                          title="Download Markdown">
+                    <i class="fas fa-download"></i> MD
+                  </button>
+                  <button type="button" class="delete-paper-btn"
+                          @click.stop="deletePaper(paper.id)"
+                          title="Remove from database">
+                    <i class="fas fa-trash-alt"></i>
+                  </button>
+                </span>
               </div>
               <div class="paper-meta">
                 <span class="paper-id">ID: {{ paper.id.slice(0,8) }}...</span>
